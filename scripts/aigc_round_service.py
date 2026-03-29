@@ -17,6 +17,46 @@ PROMPTS = {
 Transform = Callable[[str, str, int, str], str]
 
 
+SHARED_OUTPUT_CONTRACT = """
+[OUTPUT CONTRACT]
+- Only return the rewritten body text for the current input chunk.
+- Preserve the original meaning, facts, claims, conclusions, numbering, and paragraph role.
+- Do not add, remove, or replace viewpoints or conclusions.
+- Do not output explanations, suggestions, options, comments, invitations, or summaries.
+- Do not output phrases like: 修改后：, 改写后：, 可以改成, 如果你愿意, 说明：, 原因很简单, 我也可以继续帮你.
+- Do not turn the text into chat, Q&A, title suggestions, bullet recommendations, or markdown formatting unless the input already contains it.
+""".strip()
+
+DISALLOWED_OUTPUT_PATTERNS = (
+    "如果你愿意",
+    "可以改成",
+    "改写后：",
+    "修改后：",
+    "说明：",
+    "原因很简单",
+    "我也可以继续帮你",
+    "请把需要",
+    "你可以直接贴",
+)
+
+
+def validate_chunk_output(input_text: str, output_text: str, chunk_id: str) -> None:
+    normalized_output = output_text.strip()
+    if not normalized_output:
+        raise ValueError(f"Chunk {chunk_id} returned empty output")
+
+    for pattern in DISALLOWED_OUTPUT_PATTERNS:
+        if pattern in normalized_output:
+            raise ValueError(f"Chunk {chunk_id} contains disallowed answer-style pattern: {pattern}")
+
+    markdown_markers = ("**", "### ", "## ", "- **", "> ")
+    if any(marker in normalized_output for marker in markdown_markers) and not any(marker in input_text for marker in markdown_markers):
+        raise ValueError(f"Chunk {chunk_id} introduced markdown-style formatting")
+
+    if len(normalized_output) > max(len(input_text) * 2, len(input_text) + 200):
+        raise ValueError(f"Chunk {chunk_id} expanded abnormally; possible answer-style drift")
+
+
 def normalize_path(path: Path) -> Path:
     if path.is_absolute():
         return path
@@ -42,6 +82,7 @@ def build_prompt_input(prompt_text: str, chunk_text: str, round_number: int, chu
         f"[ROUND {round_number}]\n"
         f"[CHUNK {chunk_id}]\n\n"
         f"{prompt_text.strip()}\n\n"
+        f"{SHARED_OUTPUT_CONTRACT}\n\n"
         "[INPUT TEXT]\n"
         f"{chunk_text}"
     )
@@ -66,15 +107,17 @@ def run_round(
     save_manifest(manifest, normalized_manifest_path)
 
     prompt_text = load_prompt(round_number)
-    chunk_outputs = {
-        chunk.chunk_id: transform(
+    chunk_outputs = {}
+    for chunk in manifest.chunks:
+        chunk_output = transform(
             chunk.text,
             build_prompt_input(prompt_text, chunk.text, round_number, chunk.chunk_id),
             round_number,
             chunk.chunk_id,
         )
-        for chunk in manifest.chunks
-    }
+        validate_chunk_output(chunk.text, chunk_output, chunk.chunk_id)
+        chunk_outputs[chunk.chunk_id] = chunk_output
+
     restored = restore_text_from_chunks(manifest, chunk_outputs)
 
     normalized_output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -56,6 +56,41 @@ def get_document_status(source_path: str) -> dict[str, Any]:
     }
 
 
+def get_document_history(source_path: str) -> dict[str, Any]:
+    normalized_source = normalize_path(Path(source_path))
+    context = build_round_context(normalized_source)
+    records = load_records()
+    entry = records.get(context.doc_id, {}) if isinstance(records, dict) else {}
+    rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
+
+    history_rounds: list[dict[str, Any]] = []
+    for item in rounds:
+        if not isinstance(item, dict):
+            continue
+        history_rounds.append(
+            {
+                "round": int(item.get("round", 0)),
+                "prompt": str(item.get("prompt", "")),
+                "inputPath": str(item.get("input_path", "")),
+                "outputPath": str(item.get("output_path", "")),
+                "manifestPath": str(item.get("manifest_path", "")),
+                "scoreTotal": item.get("score_total"),
+                "chunkLimit": item.get("chunk_limit"),
+                "inputSegmentCount": item.get("input_segment_count"),
+                "outputSegmentCount": item.get("output_segment_count"),
+                "timestamp": str(item.get("timestamp", "")),
+            }
+        )
+
+    history_rounds.sort(key=lambda item: item["round"], reverse=True)
+
+    return {
+        "docId": context.doc_id,
+        "sourcePath": str(normalized_source),
+        "rounds": history_rounds,
+    }
+
+
 def run_round_for_app(source_path: str, model_config: dict[str, Any], round_number: int | None = None) -> dict[str, Any]:
     from skill_round_helper import run_skill_round
 
@@ -149,6 +184,9 @@ def cli_main() -> None:
     status_parser = subparsers.add_parser("document-status")
     status_parser.add_argument("source_path")
 
+    history_parser = subparsers.add_parser("document-history")
+    history_parser.add_argument("source_path")
+
     run_parser = subparsers.add_parser("run-round")
     run_parser.add_argument("source_path")
     run_parser.add_argument("model_config_json", nargs="?", default=None)
@@ -169,6 +207,8 @@ def cli_main() -> None:
         payload = import_document(args.source_path)
     elif args.command == "document-status":
         payload = get_document_status(args.source_path)
+    elif args.command == "document-history":
+        payload = get_document_history(args.source_path)
     elif args.command == "run-round":
         payload = run_round_for_app(
             args.source_path,

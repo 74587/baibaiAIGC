@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { DocumentStatus, ExportResult, ModelConfig, RoundResult } from "../types/app";
+import type { DocumentHistory, DocumentStatus, ExportResult, ModelConfig, RoundResult } from "../types/app";
 
 const defaultModelConfig: ModelConfig = {
   baseUrl: "",
@@ -31,6 +31,10 @@ export async function pickInputFile(): Promise<string | null> {
 
 export async function getDocumentStatus(sourcePath: string): Promise<DocumentStatus> {
   return invoke<DocumentStatus>("get_document_status", { sourcePath });
+}
+
+export async function getDocumentHistory(sourcePath: string): Promise<DocumentHistory> {
+  return invoke<DocumentHistory>("get_document_history", { sourcePath });
 }
 
 export async function runRound(sourcePath: string, modelConfig: ModelConfig): Promise<RoundResult> {

@@ -126,6 +126,16 @@ async fn get_document_status(source_path: String) -> Result<serde_json::Value, S
 }
 
 #[tauri::command]
+async fn get_document_history(source_path: String) -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let output = run_python_json(&["document-history".to_string(), source_path])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn run_aigc_round(source_path: String, model_config: ModelConfig) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let config_json = serde_json::to_string(&model_config).map_err(|error| error.to_string())?;
@@ -172,6 +182,7 @@ fn main() {
             load_model_config,
             save_model_config,
             get_document_status,
+            get_document_history,
             run_aigc_round,
             read_output_text,
             export_round_output,
