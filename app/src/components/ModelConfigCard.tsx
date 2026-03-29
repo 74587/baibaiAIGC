@@ -6,9 +6,10 @@ type Props = {
   busy: boolean;
   onChange: (value: ModelConfig) => void;
   onSave: () => void;
+  onTestConnection: () => void;
 };
 
-export function ModelConfigCard({ value, busy, onChange, onSave }: Props) {
+export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnection }: Props) {
   function handleTextField<K extends keyof ModelConfig>(key: K) {
     return (event: ChangeEvent<HTMLInputElement>) => {
       const nextValue = key === "temperature" ? Number(event.target.value) : event.target.value;
@@ -68,9 +69,14 @@ export function ModelConfigCard({ value, busy, onChange, onSave }: Props) {
         <span>离线联调模式</span>
         <input type="checkbox" checked={value.offlineMode} onChange={handleOfflineModeChange} />
       </label>
-      <button className="primary-button" onClick={onSave} disabled={busy}>
-        保存模型设置
-      </button>
+      <div className="button-row">
+        <button className="secondary-button" onClick={onTestConnection} disabled={busy}>
+          测试连通性
+        </button>
+        <button className="primary-button" onClick={onSave} disabled={busy}>
+          保存模型设置
+        </button>
+      </div>
     </section>
   );
 }

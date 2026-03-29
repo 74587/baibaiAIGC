@@ -15,6 +15,7 @@ PROMPTS = {
 
 
 Transform = Callable[[str, str, int, str], str]
+ProgressCallback = Callable[[dict[str, object]], None]
 
 
 SHARED_OUTPUT_CONTRACT = """
@@ -97,6 +98,7 @@ def run_round(
     transform: Transform,
     chunk_limit: int = DEFAULT_CHUNK_LIMIT,
     score_total: int | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     normalized_input_path = normalize_path(input_path)
     normalized_output_path = normalize_path(output_path)
@@ -106,9 +108,33 @@ def run_round(
     manifest = build_manifest(text, chunk_limit=chunk_limit)
     save_manifest(manifest, normalized_manifest_path)
 
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "chunking-ready",
+                "round": round_number,
+                "totalChunks": manifest.chunk_count,
+                "paragraphCount": manifest.paragraph_count,
+                "inputPath": str(normalized_input_path),
+                "outputPath": str(normalized_output_path),
+            }
+        )
+
     prompt_text = load_prompt(round_number)
     chunk_outputs = {}
-    for chunk in manifest.chunks:
+    for index, chunk in enumerate(manifest.chunks, start=1):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "processing-chunk",
+                    "round": round_number,
+                    "currentChunk": index,
+                    "totalChunks": manifest.chunk_count,
+                    "chunkId": chunk.chunk_id,
+                    "paragraphIndex": chunk.paragraph_index,
+                    "chunkIndex": chunk.chunk_index,
+                }
+            )
         chunk_output = transform(
             chunk.text,
             build_prompt_input(prompt_text, chunk.text, round_number, chunk.chunk_id),
@@ -118,7 +144,27 @@ def run_round(
         validate_chunk_output(chunk.text, chunk_output, chunk.chunk_id)
         chunk_outputs[chunk.chunk_id] = chunk_output
 
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "chunk-complete",
+                    "round": round_number,
+                    "currentChunk": index,
+                    "totalChunks": manifest.chunk_count,
+                    "chunkId": chunk.chunk_id,
+                }
+            )
+
     restored = restore_text_from_chunks(manifest, chunk_outputs)
+
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "restoring-output",
+                "round": round_number,
+                "totalChunks": manifest.chunk_count,
+            }
+        )
 
     normalized_output_path.parent.mkdir(parents=True, exist_ok=True)
     normalized_output_path.write_text(restored, encoding="utf-8")

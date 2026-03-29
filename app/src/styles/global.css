@@ -339,7 +339,13 @@ input:focus {
 
 .button-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+.button-row .primary-button,
+.button-row .secondary-button {
+  flex: 1 1 160px;
 }
 
 .empty-state {

@@ -1,7 +1,9 @@
-import type { DocumentHistory } from "../types/app";
+import type { DocumentHistory, HistoryRound } from "../types/app";
 
 type Props = {
   value: DocumentHistory | null;
+  busy: boolean;
+  onDownload: (item: HistoryRound, format: "txt" | "docx") => void;
 };
 
 function formatTimestamp(value: string): string {
@@ -21,7 +23,7 @@ function formatTimestamp(value: string): string {
   }).format(date);
 }
 
-export function HistoryCard({ value }: Props) {
+export function HistoryCard({ value, busy, onDownload }: Props) {
   return (
     <section className="glass-card section-stack history-card">
       <div className="section-header">
@@ -46,6 +48,22 @@ export function HistoryCard({ value }: Props) {
               <div className="path-box compact-box">
                 <span>输出路径</span>
                 <strong>{item.outputPath || "暂无"}</strong>
+              </div>
+              <div className="button-row">
+                <button
+                  className="secondary-button"
+                  onClick={() => onDownload(item, "txt")}
+                  disabled={busy || !item.outputPath}
+                >
+                  下载 TXT
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => onDownload(item, "docx")}
+                  disabled={busy || !item.outputPath}
+                >
+                  下载 Word
+                </button>
               </div>
             </article>
           ))}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import shutil
 from pathlib import Path
 from typing import Any
@@ -8,11 +9,24 @@ from typing import Any
 from aigc_records import load_records
 from aigc_round_service import normalize_path
 from docx_pipeline import _split_text_into_blocks, write_docx_text
-from llm_client import chat_completion
+from llm_client import chat_completion, test_chat_connection
 from skill_round_helper import build_round_context
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def emit_progress_event(event: dict[str, Any]) -> None:
+    payload = {"event": "round-progress", "payload": event}
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def emit_result_payload(payload: dict[str, Any]) -> None:
+    print(json.dumps({"event": "result", "payload": payload}, ensure_ascii=False), flush=True)
+
+
+def emit_error_payload(message: str) -> None:
+    print(json.dumps({"event": "error", "payload": {"message": message}}, ensure_ascii=False), flush=True)
 
 
 def import_document(source_path: str) -> dict[str, Any]:
@@ -116,7 +130,12 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
                 temperature=temperature,
             )
 
-    result = run_skill_round(source_path, transform=transform, round_number=round_number)
+    result = run_skill_round(
+        source_path,
+        transform=transform,
+        round_number=round_number,
+        progress_callback=emit_progress_event,
+    )
     return {
         "round": int(result["round"]),
         "outputPath": str(result["output_path"]),
@@ -128,6 +147,33 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
         "offlineMode": offline_mode,
         "docEntry": result["doc_entry"],
         "skillContext": result["skill_context"],
+    }
+
+
+def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
+    base_url = str(model_config.get("baseUrl", "")).strip()
+    api_key = str(model_config.get("apiKey", "")).strip()
+    model = str(model_config.get("model", "")).strip()
+    offline_mode = bool(model_config.get("offlineMode", False))
+
+    if offline_mode:
+        return {
+            "ok": True,
+            "offlineMode": True,
+            "message": "当前为离线模式，无需测试远程连通性。",
+            "endpoint": "",
+            "model": model,
+        }
+
+    if not base_url or not api_key or not model:
+        raise ValueError("Model configuration is incomplete.")
+
+    result = test_chat_connection(model=model, api_key=api_key, base_url=base_url)
+    return {
+        "ok": True,
+        "offlineMode": False,
+        "message": "接口连通性测试成功。",
+        **result,
     }
 
 
@@ -193,6 +239,10 @@ def cli_main() -> None:
     run_parser.add_argument("--config-file", default=None)
     run_parser.add_argument("--round", type=int, default=None)
 
+    test_parser = subparsers.add_parser("test-connection")
+    test_parser.add_argument("model_config_json", nargs="?", default=None)
+    test_parser.add_argument("--config-file", default=None)
+
     export_parser = subparsers.add_parser("export-round")
     export_parser.add_argument("output_path")
     export_parser.add_argument("export_path")
@@ -203,26 +253,38 @@ def cli_main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "import-document":
-        payload = import_document(args.source_path)
-    elif args.command == "document-status":
-        payload = get_document_status(args.source_path)
-    elif args.command == "document-history":
-        payload = get_document_history(args.source_path)
-    elif args.command == "run-round":
-        payload = run_round_for_app(
-            args.source_path,
-            load_model_config_payload(args.model_config_json, args.config_file),
-            args.round,
-        )
-    elif args.command == "export-round":
-        payload = export_round_output(args.output_path, args.export_path, args.target_format)
-    elif args.command == "read-output":
-        payload = read_output_text(args.output_path)
-    else:
-        raise ValueError(f"Unsupported command: {args.command}")
-
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    try:
+        if args.command == "import-document":
+            payload = import_document(args.source_path)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "document-status":
+            payload = get_document_status(args.source_path)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "document-history":
+            payload = get_document_history(args.source_path)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "run-round":
+            payload = run_round_for_app(
+                args.source_path,
+                load_model_config_payload(args.model_config_json, args.config_file),
+                args.round,
+            )
+            emit_result_payload(payload)
+        elif args.command == "test-connection":
+            payload = test_model_connection(load_model_config_payload(args.model_config_json, args.config_file))
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "export-round":
+            payload = export_round_output(args.output_path, args.export_path, args.target_format)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "read-output":
+            payload = read_output_text(args.output_path)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            raise ValueError(f"Unsupported command: {args.command}")
+    except Exception as exc:
+        if args.command == "run-round":
+            emit_error_payload(str(exc))
+        raise
 
 
 if __name__ == "__main__":

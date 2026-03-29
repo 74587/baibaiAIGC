@@ -11,6 +11,7 @@ from docx_pipeline import read_docx_text
 
 
 Transform = Callable[[str, str, int, str], str]
+ProgressCallback = Callable[[dict[str, object]], None]
 INTERMEDIATE_DIR = ROOT_DIR / "finish" / "intermediate"
 
 
@@ -98,7 +99,12 @@ def ensure_skill_input_text(source_path: Path | str) -> tuple[Path, bool]:
     raise ValueError(f"Unsupported input type for skill mode: {normalized_source}")
 
 
-def run_skill_round(source_path: Path | str, transform: Transform, round_number: int | None = None) -> dict:
+def run_skill_round(
+    source_path: Path | str,
+    transform: Transform,
+    round_number: int | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     context = build_round_context(source_path, round_number=round_number)
     result = run_round(
         doc_id=context.doc_id,
@@ -107,6 +113,7 @@ def run_skill_round(source_path: Path | str, transform: Transform, round_number:
         output_path=context.output_text_path,
         manifest_path=context.manifest_path,
         transform=transform,
+        progress_callback=progress_callback,
     )
     result["skill_context"] = context.to_dict()
     return result

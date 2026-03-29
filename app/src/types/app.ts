@@ -6,6 +6,28 @@ export type ModelConfig = {
   offlineMode: boolean;
 };
 
+export type RoundProgress = {
+  phase: string;
+  round: number;
+  currentChunk?: number;
+  totalChunks?: number;
+  chunkId?: string;
+  paragraphIndex?: number;
+  chunkIndex?: number;
+  paragraphCount?: number;
+  inputPath?: string;
+  outputPath?: string;
+};
+
+export type TestConnectionResult = {
+  ok: boolean;
+  offlineMode: boolean;
+  message: string;
+  endpoint: string;
+  model: string;
+  status?: number;
+};
+
 export type DocumentStatus = {
   docId: string;
   sourcePath: string;

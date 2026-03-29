@@ -1,9 +1,30 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tauri::async_runtime::spawn_blocking;
+use tauri::{Emitter, Window};
+
+const ROUND_PROGRESS_EVENT: &str = "round-progress";
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TestConnectionResult {
+    ok: bool,
+    offline_mode: bool,
+    message: String,
+    endpoint: String,
+    model: String,
+    status: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PythonEventEnvelope {
+    event: String,
+    payload: serde_json::Value,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +84,84 @@ fn run_python_json(args: &[String]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn run_python_json_streaming(window: Window, args: &[String]) -> Result<serde_json::Value, String> {
+    let root = workspace_root()?;
+    let python = python_executable(&root);
+    let mut command = Command::new(python);
+    command.current_dir(&root);
+    command.env("PYTHONIOENCODING", "utf-8");
+    command.env("PYTHONUTF8", "1");
+    command.arg("scripts/app_service.py");
+    for arg in args {
+        command.arg(arg);
+    }
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or_else(|| "Cannot capture Python stdout".to_string())?;
+    let stderr = child.stderr.take().ok_or_else(|| "Cannot capture Python stderr".to_string())?;
+
+    let mut final_payload: Option<serde_json::Value> = None;
+    for line in BufReader::new(stdout).lines() {
+        let raw_line = line.map_err(|error| error.to_string())?;
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let envelope: PythonEventEnvelope = serde_json::from_str(trimmed).map_err(|error| {
+            format!("Failed to parse Python event: {error}; line: {trimmed}")
+        })?;
+        match envelope.event.as_str() {
+            "round-progress" => {
+                window
+                    .emit(ROUND_PROGRESS_EVENT, envelope.payload)
+                    .map_err(|error| error.to_string())?;
+            }
+            "result" => {
+                final_payload = Some(envelope.payload);
+            }
+            "error" => {
+                let message = envelope
+                    .payload
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Python command failed")
+                    .to_string();
+                return Err(message);
+            }
+            other => {
+                return Err(format!("Unsupported Python event: {other}"));
+            }
+        }
+    }
+
+    let stderr_output = {
+        let mut buffer = String::new();
+        let mut reader = BufReader::new(stderr);
+        loop {
+            let mut line = String::new();
+            let bytes = reader.read_line(&mut line).map_err(|error| error.to_string())?;
+            if bytes == 0 {
+                break;
+            }
+            buffer.push_str(&line);
+        }
+        buffer.trim().to_string()
+    };
+
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(if stderr_output.is_empty() {
+            "Python command failed".to_string()
+        } else {
+            stderr_output
+        });
+    }
+
+    final_payload.ok_or_else(|| "Python command completed without result payload".to_string())
+}
+
 fn run_python_inline(code: &str) -> Result<String, String> {
     let root = workspace_root()?;
     let python = python_executable(&root);
@@ -116,6 +215,20 @@ async fn save_model_config(config: ModelConfig) -> Result<ModelConfig, String> {
 }
 
 #[tauri::command]
+async fn test_model_connection(config: ModelConfig) -> Result<TestConnectionResult, String> {
+    spawn_blocking(move || {
+        let config_json = serde_json::to_string(&config).map_err(|error| error.to_string())?;
+        let output = run_python_json(&[
+            "test-connection".to_string(),
+            config_json,
+        ])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn get_document_status(source_path: String) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let output = run_python_json(&["document-status".to_string(), source_path])?;
@@ -136,15 +249,14 @@ async fn get_document_history(source_path: String) -> Result<serde_json::Value, 
 }
 
 #[tauri::command]
-async fn run_aigc_round(source_path: String, model_config: ModelConfig) -> Result<serde_json::Value, String> {
+async fn run_aigc_round(window: Window, source_path: String, model_config: ModelConfig) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let config_json = serde_json::to_string(&model_config).map_err(|error| error.to_string())?;
-        let output = run_python_json(&[
+        run_python_json_streaming(window, &[
             "run-round".to_string(),
             source_path,
             config_json,
-        ])?;
-        serde_json::from_str(&output).map_err(|error| error.to_string())
+        ])
     })
     .await
     .map_err(|error| error.to_string())?
@@ -181,6 +293,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_model_config,
             save_model_config,
+            test_model_connection,
             get_document_status,
             get_document_history,
             run_aigc_round,

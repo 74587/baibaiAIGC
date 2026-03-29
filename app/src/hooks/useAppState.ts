@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DocumentHistory, DocumentStatus, ModelConfig, RoundResult } from "../types/app";
+import type { DocumentHistory, DocumentStatus, ModelConfig, RoundProgress, RoundResult } from "../types/app";
 
 const defaultModelConfig: ModelConfig = {
   baseUrl: "",
@@ -14,6 +14,7 @@ type AppState = {
   documentStatus: DocumentStatus | null;
   history: DocumentHistory | null;
   roundResult: RoundResult | null;
+  progress: RoundProgress | null;
   previewText: string;
   runtimeStep: string;
   notice: string;
@@ -23,6 +24,7 @@ type AppState = {
   setDocumentStatus: (status: DocumentStatus | null) => void;
   setHistory: (history: DocumentHistory | null) => void;
   setRoundResult: (result: RoundResult | null) => void;
+  setProgress: (progress: RoundProgress | null) => void;
   setPreviewText: (text: string) => void;
   setRuntimeStep: (text: string) => void;
   setNotice: (notice: string) => void;
@@ -35,6 +37,7 @@ export const useAppState = create<AppState>((set) => ({
   documentStatus: null,
   history: null,
   roundResult: null,
+  progress: null,
   previewText: "",
   runtimeStep: "待命",
   notice: "",
@@ -44,6 +47,7 @@ export const useAppState = create<AppState>((set) => ({
   setDocumentStatus: (documentStatus) => set({ documentStatus }),
   setHistory: (history) => set({ history }),
   setRoundResult: (roundResult) => set({ roundResult }),
+  setProgress: (progress) => set({ progress }),
   setPreviewText: (previewText) => set({ previewText }),
   setRuntimeStep: (runtimeStep) => set({ runtimeStep }),
   setNotice: (notice) => set({ notice }),

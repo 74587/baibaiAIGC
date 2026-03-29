@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { DocumentHistory, DocumentStatus, ExportResult, ModelConfig, RoundResult } from "../types/app";
+import type {
+  DocumentHistory,
+  DocumentStatus,
+  ExportResult,
+  ModelConfig,
+  RoundProgress,
+  RoundResult,
+  TestConnectionResult,
+} from "../types/app";
 
 const defaultModelConfig: ModelConfig = {
   baseUrl: "",
@@ -18,6 +27,10 @@ export async function loadModelConfig(): Promise<ModelConfig> {
 export async function saveModelConfig(config: ModelConfig): Promise<ModelConfig> {
   const saved = await invoke<Partial<ModelConfig>>("save_model_config", { config });
   return { ...defaultModelConfig, ...saved };
+}
+
+export async function testModelConnection(config: ModelConfig): Promise<TestConnectionResult> {
+  return invoke<TestConnectionResult>("test_model_connection", { config });
 }
 
 export async function pickInputFile(): Promise<string | null> {
@@ -39,6 +52,14 @@ export async function getDocumentHistory(sourcePath: string): Promise<DocumentHi
 
 export async function runRound(sourcePath: string, modelConfig: ModelConfig): Promise<RoundResult> {
   return invoke<RoundResult>("run_aigc_round", { sourcePath, modelConfig });
+}
+
+export async function listenRoundProgress(
+  onProgress: (payload: RoundProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<RoundProgress>("round-progress", (event) => {
+    onProgress(event.payload);
+  });
 }
 
 export async function readOutput(outputPath: string): Promise<{ path: string; text: string }> {
