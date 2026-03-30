@@ -1,5 +1,5 @@
 import type { ChangeEvent } from "react";
-import type { ApiMode, ModelConfig, PromptProfile } from "../types/app";
+import type { ModelConfig } from "../types/app";
 
 type Props = {
   value: ModelConfig;
@@ -19,14 +19,6 @@ export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnectio
 
   function handleOfflineModeChange(event: ChangeEvent<HTMLInputElement>) {
     onChange({ ...value, offlineMode: event.target.checked });
-  }
-
-  function handlePromptProfileChange(promptProfile: PromptProfile) {
-    onChange({ ...value, promptProfile });
-  }
-
-  function handleApiModeChange(event: ChangeEvent<HTMLSelectElement>) {
-    onChange({ ...value, apiMode: event.target.value as ApiMode });
   }
 
   return (
@@ -63,10 +55,16 @@ export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnectio
         />
       </label>
       <label className="field">
-        <span>接口模式</span>
-        <select value={value.apiMode} onChange={handleApiModeChange}>
-          <option value="responses">/v1/responses</option>
-          <option value="chat-completions">/v1/chat/completions</option>
+        <span>接口类型</span>
+        <select
+          value={value.apiType}
+          onChange={(event) => onChange({
+            ...value,
+            apiType: event.target.value as ModelConfig["apiType"],
+          })}
+        >
+          <option value="chat_completions">chat/completions</option>
+          <option value="responses">responses</option>
         </select>
       </label>
       <label className="field">
@@ -80,25 +78,6 @@ export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnectio
           onChange={handleTextField("temperature")}
         />
       </label>
-      <div className="field">
-        <span>去 AI 模式</span>
-        <div className="segmented-control" role="group" aria-label="去 AI 模式">
-          <button
-            type="button"
-            className={value.promptProfile === "cn" ? "segment-button active" : "segment-button"}
-            onClick={() => handlePromptProfileChange("cn")}
-          >
-            中文两轮
-          </button>
-          <button
-            type="button"
-            className={value.promptProfile === "en" ? "segment-button active" : "segment-button"}
-            onClick={() => handlePromptProfileChange("en")}
-          >
-            英文单轮
-          </button>
-        </div>
-      </div>
       <label className="toggle-field">
         <span>离线联调模式</span>
         <input type="checkbox" checked={value.offlineMode} onChange={handleOfflineModeChange} />

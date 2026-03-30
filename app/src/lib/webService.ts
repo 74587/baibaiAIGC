@@ -17,10 +17,9 @@ const defaultModelConfig: ModelConfig = {
   baseUrl: "",
   apiKey: "",
   model: "",
-  apiMode: "responses",
+  apiType: "chat_completions",
   temperature: 0.7,
   offlineMode: false,
-  promptProfile: "cn",
 };
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -129,10 +128,8 @@ export const webService: AppService = {
     });
   },
 
-  async getDocumentStatus(sourcePath: string, modelConfig: ModelConfig): Promise<DocumentStatus> {
-    return requestJson<DocumentStatus>(
-      `/api/document-status?sourcePath=${encodeURIComponent(sourcePath)}&promptProfile=${encodeURIComponent(modelConfig.promptProfile)}`,
-    );
+  async getDocumentStatus(sourcePath: string): Promise<DocumentStatus> {
+    return requestJson<DocumentStatus>(`/api/document-status?sourcePath=${encodeURIComponent(sourcePath)}`);
   },
 
   async getDocumentHistory(sourcePath: string): Promise<DocumentHistory> {
