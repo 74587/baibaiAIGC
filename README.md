@@ -159,7 +159,7 @@ npm install
 
 #### 模式 D：使用app
 
-[![Download for Windows](https://img.shields.io/badge/Download-Windows%20Installer-blue?style=for-the-badge&logo=windows)](https://github.com/poleHansen/baibaiAIGC/releases/tag/v1.0.0)
+[![点击下载baibaiAIGC](https://img.shields.io/badge/Download-Windows%20Installer-blue?style=for-the-badge&logo=windows)](https://github.com/poleHansen/baibaiAIGC/releases/tag/v1.0.0)
 
 ## Web 端运行说明
 
