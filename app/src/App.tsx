@@ -16,11 +16,19 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
   if (!progress) {
     return fallback;
   }
+  if (progress.phase === "chunk-error") {
+    return `第 ${progress.round} 轮已暂停，第 ${progress.currentChunk}/${progress.totalChunks} 块处理失败`;
+  }
   if (progress.phase === "processing-chunk" && progress.currentChunk && progress.totalChunks) {
     return `正在执行第 ${progress.round} 轮，第 ${progress.currentChunk}/${progress.totalChunks} 块`;
   }
   if (progress.phase === "chunking-ready" && progress.totalChunks) {
-    return `第 ${progress.round} 轮已切块，共 ${progress.totalChunks} 块，准备开始处理`;
+    const prefix = progress.resumed ? "已恢复断点" : "已切块";
+    const completed = progress.completedChunks ? `，已完成 ${progress.completedChunks} 块` : "";
+    return `第 ${progress.round} 轮${prefix}，共 ${progress.totalChunks} 块${completed}，准备开始处理`;
+  }
+  if (progress.phase === "chunk-skipped" && progress.currentChunk && progress.totalChunks) {
+    return `第 ${progress.round} 轮跳过已完成块，第 ${progress.currentChunk}/${progress.totalChunks} 块已复用`;
   }
   if (progress.phase === "restoring-output") {
     return `第 ${progress.round} 轮已完成分块处理，正在合并输出`;
@@ -36,6 +44,19 @@ function describeDocumentProgress(nextRound: number | null, hasNextRound: boolea
     return `当前可执行第 ${nextRound} 轮。`;
   }
   return "当前文档已完成全部轮次。";
+}
+
+function describeProgressStatus(status: string): string {
+  if (status === "completed") {
+    return "已完成";
+  }
+  if (status === "in_progress") {
+    return "处理中";
+  }
+  if (status === "paused") {
+    return "已暂停，等待手动继续";
+  }
+  return "未开始";
 }
 
 function describePromptProfile(promptProfile: "cn" | "en"): string {
@@ -220,7 +241,13 @@ export function App({ service, pickerLabel }: Props) {
       setRoundResult(null);
       setPreviewText("");
       setRuntimeStep(status.hasNextRound && status.nextRound ? `已载入文档，当前到第 ${status.nextRound} 轮` : "已载入文档，全部轮次已完成");
-      setNotice(`已导入文档，当前使用${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}`);
+      const resumeNotice = status.totalChunkCount && status.completedChunkCount
+        ? `检测到第 ${status.nextRound} 轮已有 ${status.completedChunkCount}/${status.totalChunkCount} 块进度，可直接续跑。`
+        : "";
+      const errorNotice = status.lastError
+        ? ` 当前暂停原因：${status.lastError}`
+        : "";
+      setNotice(`已导入文档，当前使用${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}${resumeNotice}${errorNotice}`);
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("读取文档失败");
@@ -248,6 +275,9 @@ export function App({ service, pickerLabel }: Props) {
       progressUnlistenRef.current = await service.listenRoundProgress((nextProgress) => {
         setProgress(nextProgress);
         setRuntimeStep(formatRuntimeStep(nextProgress, "处理中"));
+        if (nextProgress.phase === "chunk-error") {
+          setNotice(nextProgress.error || "本轮已暂停，请检查网络或模型接口后手动继续。");
+        }
       }, runToken);
       setRuntimeStep(`准备执行第 ${documentStatus.nextRound} 轮`);
       setNotice(`本次运行将使用${describePromptProfile(modelConfig.promptProfile)}。`);
@@ -264,13 +294,26 @@ export function App({ service, pickerLabel }: Props) {
       await refreshHistoryList();
       setHistoryPanelOpen(true);
       setRuntimeStep(status.hasNextRound && status.nextRound ? `第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮` : `第 ${result.round} 轮完成，全部轮次已结束`);
-      setNotice(status.hasNextRound ? `第 ${result.round} 轮已完成，可以继续导出或进入下一轮。` : `第 ${result.round} 轮已完成，当前文档的全部轮次已结束，可以直接导出。`);
+      setNotice(
+        status.hasNextRound
+          ? `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，可以继续导出或进入下一轮。`
+          : `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，当前文档的全部轮次已结束，可以直接导出。`,
+      );
     } catch (appError) {
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
+      const latestStatus = await refreshDocumentState(documentStatus.sourcePath).catch(() => null);
+      const pausedMessage = latestStatus?.progressStatus === "paused"
+        ? latestStatus.lastError || "网络异常或模型请求失败，当前轮已暂停，请手动点击继续。"
+        : "";
       setProgress(null);
-      setError(String(appError));
-      setRuntimeStep("执行轮次失败");
+      setError(pausedMessage || String(appError));
+      setNotice(
+        pausedMessage
+          ? `已暂停在第 ${latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，请处理后手动继续。`
+          : "",
+      );
+      setRuntimeStep(pausedMessage ? "执行已暂停，等待手动继续" : "执行轮次失败");
     } finally {
       setBusy(false);
     }
@@ -355,6 +398,7 @@ export function App({ service, pickerLabel }: Props) {
           onPickFile={handlePickFile}
           onRunRound={handleRunRound}
           pickerLabel={pickerLabel}
+            progressStatusLabel={documentStatus ? describeProgressStatus(documentStatus.progressStatus) : "未开始"}
         />
       </section>
 

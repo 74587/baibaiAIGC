@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id
-from aigc_round_service import MAX_ROUNDS, normalize_path
+from aigc_round_service import MAX_ROUNDS, build_progress_path, normalize_path
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import llm_completion, test_llm_connection
 from skill_round_helper import build_round_context, ensure_skill_input_text, get_document_round_state
@@ -16,13 +16,64 @@ from skill_round_helper import build_round_context, ensure_skill_input_text, get
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
+def _read_progress_summary(manifest_path: str) -> dict[str, Any]:
+    if not manifest_path:
+        return {
+            "progressPath": "",
+            "progressStatus": "",
+            "completedChunkCount": 0,
+            "totalChunkCount": 0,
+            "lastError": "",
+            "lastErrorChunkId": "",
+        }
+
+    progress_path = build_progress_path(normalize_path(Path(manifest_path)))
+    if not progress_path.exists():
+        return {
+            "progressPath": str(progress_path),
+            "progressStatus": "",
+            "completedChunkCount": 0,
+            "totalChunkCount": 0,
+            "lastError": "",
+            "lastErrorChunkId": "",
+        }
+
+    data = json.loads(progress_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {
+            "progressPath": str(progress_path),
+            "progressStatus": "",
+            "completedChunkCount": 0,
+            "totalChunkCount": 0,
+            "lastError": "",
+            "lastErrorChunkId": "",
+        }
+
+    return {
+        "progressPath": str(progress_path),
+        "progressStatus": str(data.get("status", "") or ""),
+        "completedChunkCount": int(data.get("completed_chunks", 0) or 0),
+        "totalChunkCount": int(data.get("total_chunks", 0) or 0),
+        "lastError": str(data.get("last_error", "") or ""),
+        "lastErrorChunkId": str(data.get("last_error_chunk_id", "") or ""),
+    }
+
+
 def _map_history_round(item: dict[str, Any]) -> dict[str, Any]:
+    manifest_path = str(item.get("manifest_path", ""))
+    progress = _read_progress_summary(manifest_path)
     return {
         "round": int(item.get("round", 0)),
         "prompt": str(item.get("prompt", "")),
         "inputPath": str(item.get("input_path", "")),
         "outputPath": str(item.get("output_path", "")),
-        "manifestPath": str(item.get("manifest_path", "")),
+        "manifestPath": manifest_path,
+        "progressPath": progress["progressPath"],
+        "progressStatus": progress["progressStatus"],
+        "completedChunkCount": progress["completedChunkCount"],
+        "totalChunkCount": progress["totalChunkCount"],
+        "lastError": progress["lastError"],
+        "lastErrorChunkId": progress["lastErrorChunkId"],
         "scoreTotal": item.get("score_total"),
         "chunkLimit": item.get("chunk_limit"),
         "inputSegmentCount": item.get("input_segment_count"),
@@ -122,6 +173,12 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
     current_input_path, extracted_from_docx = ensure_skill_input_text(normalized_source)
     current_output_path = ""
     manifest_path = ""
+    progress_path = ""
+    progress_status = ""
+    completed_chunk_count = 0
+    total_chunk_count = 0
+    last_error = ""
+    last_error_chunk_id = ""
 
     if round_state.next_round is not None:
         context = build_round_context(
@@ -132,6 +189,13 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         current_input_path = context.input_text_path
         current_output_path = str(context.output_text_path)
         manifest_path = str(context.manifest_path)
+        progress = _read_progress_summary(manifest_path)
+        progress_path = str(progress["progressPath"])
+        progress_status = str(progress["progressStatus"])
+        completed_chunk_count = int(progress["completedChunkCount"])
+        total_chunk_count = int(progress["totalChunkCount"])
+        last_error = str(progress["lastError"])
+        last_error_chunk_id = str(progress["lastErrorChunkId"])
 
     if rounds:
         latest_round = max(
@@ -160,6 +224,12 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         "currentInputPath": str(current_input_path),
         "currentOutputPath": current_output_path,
         "manifestPath": manifest_path,
+        "progressPath": progress_path,
+        "progressStatus": progress_status,
+        "completedChunkCount": completed_chunk_count,
+        "totalChunkCount": total_chunk_count,
+        "lastError": last_error,
+        "lastErrorChunkId": last_error_chunk_id,
         "latestOutputPath": latest_output_path,
         "extractedFromDocx": extracted_from_docx,
     }
@@ -225,15 +295,18 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
         def transform(chunk_text: str, _: str, __: int, ___: str) -> str:
             return chunk_text
     else:
-        def transform(_: str, prompt_input: str, __: int, ___: str) -> str:
-            return llm_completion(
-                prompt_input,
-                model=model,
-                api_key=api_key,
-                base_url=base_url,
-                api_type=api_type,
-                temperature=temperature,
-            )
+        def transform(_: str, prompt_input: str, __: int, chunk_id: str) -> str:
+            try:
+                return llm_completion(
+                    prompt_input,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    api_type=api_type,
+                    temperature=temperature,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"LLM request failed for chunk {chunk_id}: {exc}") from exc
 
     prompt_profile = str(model_config.get("promptProfile", "cn"))
     status = get_document_status(source_path, prompt_profile=prompt_profile)
@@ -251,10 +324,13 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
         "round": int(result["round"]),
         "outputPath": str(result["output_path"]),
         "manifestPath": str(result["manifest_path"]),
+        "progressPath": str(result["progress_path"]),
         "chunkLimit": int(result["chunk_limit"]),
         "inputSegmentCount": int(result["input_segment_count"]),
         "outputSegmentCount": int(result["output_segment_count"]),
+        "completedChunkCount": int(result["completed_chunk_count"]),
         "paragraphCount": int(result["paragraph_count"]),
+        "resumed": bool(result["resumed"]),
         "offlineMode": offline_mode,
         "docEntry": result["doc_entry"],
         "skillContext": result["skill_context"],

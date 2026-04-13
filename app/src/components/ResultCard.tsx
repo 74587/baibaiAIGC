@@ -9,6 +9,7 @@ type Props = {
 };
 
 export function ResultCard({ result, previewText, busy, onExportTxt, onExportDocx }: Props) {
+  const pausedError = typeof result?.docEntry?.last_error === "string" ? result.docEntry.last_error : "";
   return (
     <section className="glass-card section-stack result-card">
       <div className="section-header">
@@ -16,7 +17,7 @@ export function ResultCard({ result, previewText, busy, onExportTxt, onExportDoc
           <h2>本轮结果</h2>
           <p>每轮结束后可直接预览，并选择导出为 txt 或 Word。</p>
         </div>
-        {result ? <span className="pill">第 {result.round} 轮已完成</span> : null}
+        {result ? <span className="pill">第 {result.round} 轮已完成{result.resumed ? "（断点续跑）" : ""}</span> : null}
       </div>
       {result ? (
         <>
@@ -33,6 +34,16 @@ export function ResultCard({ result, previewText, busy, onExportTxt, onExportDoc
               <span>输出块数</span>
               <strong>{result.outputSegmentCount}</strong>
             </div>
+            <div className="info-item">
+              <span>已保存块数</span>
+              <strong>{result.completedChunkCount}</strong>
+            </div>
+            {pausedError ? (
+              <div className="info-item">
+                <span>最近暂停原因</span>
+                <strong>{pausedError}</strong>
+              </div>
+            ) : null}
             <div className="info-item">
               <span>段落数</span>
               <strong>{result.paragraphCount}</strong>

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable
 
 from aigc_records import ROOT_DIR, update_round
-from chunking import DEFAULT_CHUNK_LIMIT, build_manifest, restore_text_from_chunks, save_manifest
+from chunking import DEFAULT_CHUNK_LIMIT, ChunkManifest, build_manifest, restore_text_from_chunks, save_manifest
 
 
 PROMPT_PROFILES = {
@@ -27,6 +28,14 @@ MAX_ROUNDS = max(max(rounds) for rounds in PROMPT_PROFILES.values())
 
 Transform = Callable[[str, str, int, str], str]
 ProgressCallback = Callable[[dict[str, object]], None]
+
+
+class RoundPausedError(RuntimeError):
+    def __init__(self, message: str, *, chunk_id: str, completed_chunks: int, total_chunks: int):
+        super().__init__(message)
+        self.chunk_id = chunk_id
+        self.completed_chunks = completed_chunks
+        self.total_chunks = total_chunks
 
 
 SHARED_OUTPUT_CONTRACT = """
@@ -127,6 +136,109 @@ def build_prompt_input(prompt_text: str, chunk_text: str, round_number: int, chu
     )
 
 
+def build_progress_path(manifest_path: Path) -> Path:
+    normalized_manifest_path = normalize_path(manifest_path)
+    manifest_stem = normalized_manifest_path.stem
+    if manifest_stem.endswith("_manifest"):
+        progress_name = f"{manifest_stem[:-9]}_progress.json"
+    else:
+        progress_name = f"{manifest_stem}_progress.json"
+    return normalized_manifest_path.with_name(progress_name)
+
+
+def _default_progress_payload(
+    manifest: ChunkManifest,
+    *,
+    round_number: int,
+    input_path: Path,
+    output_path: Path,
+    manifest_path: Path,
+    prompt_profile: str,
+) -> dict[str, object]:
+    return {
+        "version": 1,
+        "status": "in_progress",
+        "round": round_number,
+        "prompt_profile": prompt_profile,
+        "input_path": str(input_path),
+        "output_path": str(output_path),
+        "manifest_path": str(manifest_path),
+        "total_chunks": manifest.chunk_count,
+        "completed_chunks": 0,
+        "last_error": "",
+        "last_error_chunk_id": "",
+        "chunk_outputs": {},
+    }
+
+
+def _load_progress_payload(
+    progress_path: Path,
+    manifest: ChunkManifest,
+    *,
+    round_number: int,
+    input_path: Path,
+    output_path: Path,
+    manifest_path: Path,
+    prompt_profile: str,
+) -> dict[str, object]:
+    if not progress_path.exists():
+        return _default_progress_payload(
+            manifest,
+            round_number=round_number,
+            input_path=input_path,
+            output_path=output_path,
+            manifest_path=manifest_path,
+            prompt_profile=prompt_profile,
+        )
+
+    data = json.loads(progress_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return _default_progress_payload(
+            manifest,
+            round_number=round_number,
+            input_path=input_path,
+            output_path=output_path,
+            manifest_path=manifest_path,
+            prompt_profile=prompt_profile,
+        )
+
+    chunk_ids = {chunk.chunk_id for chunk in manifest.chunks}
+    raw_outputs = data.get("chunk_outputs")
+    chunk_outputs = {
+        str(chunk_id): str(output)
+        for chunk_id, output in raw_outputs.items()
+        if isinstance(raw_outputs, dict)
+        and chunk_id in chunk_ids
+        and isinstance(output, str)
+        and output.strip()
+    }
+
+    payload = _default_progress_payload(
+        manifest,
+        round_number=round_number,
+        input_path=input_path,
+        output_path=output_path,
+        manifest_path=manifest_path,
+        prompt_profile=prompt_profile,
+    )
+    payload.update(
+        {
+            "version": int(data.get("version", 1) or 1),
+            "status": str(data.get("status", "in_progress") or "in_progress"),
+            "last_error": str(data.get("last_error", "") or ""),
+            "last_error_chunk_id": str(data.get("last_error_chunk_id", "") or ""),
+            "chunk_outputs": chunk_outputs,
+            "completed_chunks": len(chunk_outputs),
+        }
+    )
+    return payload
+
+
+def _save_progress_payload(progress_path: Path, payload: dict[str, object]) -> None:
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def run_round(
     doc_id: str,
     round_number: int,
@@ -142,6 +254,7 @@ def run_round(
     normalized_input_path = normalize_path(input_path)
     normalized_output_path = normalize_path(output_path)
     normalized_manifest_path = normalize_path(manifest_path)
+    normalized_progress_path = build_progress_path(normalized_manifest_path)
     normalized_prompt_profile = normalize_prompt_profile(prompt_profile)
     chunk_metric = get_chunk_metric(normalized_prompt_profile)
 
@@ -149,22 +262,57 @@ def run_round(
     manifest = build_manifest(text, chunk_limit=chunk_limit, chunk_metric=chunk_metric)
     save_manifest(manifest, normalized_manifest_path)
 
+    progress_payload = _load_progress_payload(
+        normalized_progress_path,
+        manifest,
+        round_number=round_number,
+        input_path=normalized_input_path,
+        output_path=normalized_output_path,
+        manifest_path=normalized_manifest_path,
+        prompt_profile=normalized_prompt_profile,
+    )
+    chunk_outputs = dict(progress_payload["chunk_outputs"])
+    completed_chunks = len(chunk_outputs)
+    progress_payload["completed_chunks"] = completed_chunks
+    progress_payload["total_chunks"] = manifest.chunk_count
+    if progress_payload.get("status") == "completed" and completed_chunks < manifest.chunk_count:
+        progress_payload["status"] = "paused"
+    _save_progress_payload(normalized_progress_path, progress_payload)
+
     if progress_callback is not None:
         progress_callback(
             {
                 "phase": "chunking-ready",
                 "round": round_number,
                 "totalChunks": manifest.chunk_count,
+                "completedChunks": completed_chunks,
+                "remainingChunks": manifest.chunk_count - completed_chunks,
                 "paragraphCount": manifest.paragraph_count,
                 "inputPath": str(normalized_input_path),
                 "outputPath": str(normalized_output_path),
+                "manifestPath": str(normalized_manifest_path),
+                "progressPath": str(normalized_progress_path),
+                "resumed": completed_chunks > 0,
             }
         )
 
     prompts = get_prompt_mapping(normalized_prompt_profile)
     prompt_text = load_prompt(normalized_prompt_profile, round_number)
-    chunk_outputs = {}
     for index, chunk in enumerate(manifest.chunks, start=1):
+        if chunk.chunk_id in chunk_outputs:
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "chunk-skipped",
+                        "round": round_number,
+                        "currentChunk": index,
+                        "totalChunks": manifest.chunk_count,
+                        "completedChunks": len(chunk_outputs),
+                        "chunkId": chunk.chunk_id,
+                    }
+                )
+            continue
+
         if progress_callback is not None:
             progress_callback(
                 {
@@ -172,19 +320,53 @@ def run_round(
                     "round": round_number,
                     "currentChunk": index,
                     "totalChunks": manifest.chunk_count,
+                    "completedChunks": len(chunk_outputs),
                     "chunkId": chunk.chunk_id,
                     "paragraphIndex": chunk.paragraph_index,
                     "chunkIndex": chunk.chunk_index,
                 }
             )
-        chunk_output = transform(
-            chunk.text,
-            build_prompt_input(prompt_text, chunk.text, round_number, chunk.chunk_id),
-            round_number,
-            chunk.chunk_id,
-        )
-        validate_chunk_output(chunk.text, chunk_output, chunk.chunk_id)
+        try:
+            chunk_output = transform(
+                chunk.text,
+                build_prompt_input(prompt_text, chunk.text, round_number, chunk.chunk_id),
+                round_number,
+                chunk.chunk_id,
+            )
+            validate_chunk_output(chunk.text, chunk_output, chunk.chunk_id)
+        except Exception as exc:
+            error_message = str(exc)
+            progress_payload["status"] = "paused"
+            progress_payload["last_error"] = error_message
+            progress_payload["last_error_chunk_id"] = chunk.chunk_id
+            progress_payload["completed_chunks"] = len(chunk_outputs)
+            _save_progress_payload(normalized_progress_path, progress_payload)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "chunk-error",
+                        "round": round_number,
+                        "currentChunk": index,
+                        "totalChunks": manifest.chunk_count,
+                        "completedChunks": len(chunk_outputs),
+                        "chunkId": chunk.chunk_id,
+                        "progressPath": str(normalized_progress_path),
+                        "error": error_message,
+                    }
+                )
+            raise RoundPausedError(
+                f"Chunk {chunk.chunk_id} failed and progress was paused: {error_message}",
+                chunk_id=chunk.chunk_id,
+                completed_chunks=len(chunk_outputs),
+                total_chunks=manifest.chunk_count,
+            ) from exc
         chunk_outputs[chunk.chunk_id] = chunk_output
+        progress_payload["chunk_outputs"] = chunk_outputs
+        progress_payload["status"] = "in_progress"
+        progress_payload["last_error"] = ""
+        progress_payload["last_error_chunk_id"] = ""
+        progress_payload["completed_chunks"] = len(chunk_outputs)
+        _save_progress_payload(normalized_progress_path, progress_payload)
 
         if progress_callback is not None:
             progress_callback(
@@ -193,7 +375,9 @@ def run_round(
                     "round": round_number,
                     "currentChunk": index,
                     "totalChunks": manifest.chunk_count,
+                    "completedChunks": len(chunk_outputs),
                     "chunkId": chunk.chunk_id,
+                    "progressPath": str(normalized_progress_path),
                 }
             )
 
@@ -205,11 +389,15 @@ def run_round(
                 "phase": "restoring-output",
                 "round": round_number,
                 "totalChunks": manifest.chunk_count,
+                "completedChunks": len(chunk_outputs),
             }
         )
 
     normalized_output_path.parent.mkdir(parents=True, exist_ok=True)
     normalized_output_path.write_text(restored, encoding="utf-8")
+    progress_payload["status"] = "completed"
+    progress_payload["completed_chunks"] = len(chunk_outputs)
+    _save_progress_payload(normalized_progress_path, progress_payload)
 
     doc_entry = update_round(
         doc_id=doc_id,
@@ -230,8 +418,11 @@ def run_round(
         "round": round_number,
         "output_path": str(normalized_output_path),
         "manifest_path": str(normalized_manifest_path),
+        "progress_path": str(normalized_progress_path),
         "chunk_limit": chunk_limit,
         "input_segment_count": manifest.chunk_count,
         "output_segment_count": len(chunk_outputs),
+        "completed_chunk_count": len(chunk_outputs),
         "paragraph_count": manifest.paragraph_count,
+        "resumed": completed_chunks > 0,
     }

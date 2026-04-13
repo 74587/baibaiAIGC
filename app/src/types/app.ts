@@ -13,12 +13,18 @@ export type RoundProgress = {
   round: number;
   currentChunk?: number;
   totalChunks?: number;
+  completedChunks?: number;
+  remainingChunks?: number;
   chunkId?: string;
   paragraphIndex?: number;
   chunkIndex?: number;
   paragraphCount?: number;
   inputPath?: string;
   outputPath?: string;
+  manifestPath?: string;
+  progressPath?: string;
+  resumed?: boolean;
+  error?: string;
 };
 
 export type TestConnectionResult = {
@@ -43,6 +49,12 @@ export type DocumentStatus = {
   currentInputPath: string;
   currentOutputPath: string;
   manifestPath: string;
+  progressPath: string;
+  progressStatus: string;
+  completedChunkCount: number;
+  totalChunkCount: number;
+  lastError: string;
+  lastErrorChunkId: string;
   latestOutputPath: string;
   extractedFromDocx: boolean;
 };
@@ -51,10 +63,13 @@ export type RoundResult = {
   round: number;
   outputPath: string;
   manifestPath: string;
+  progressPath: string;
   chunkLimit: number;
   inputSegmentCount: number;
   outputSegmentCount: number;
+  completedChunkCount: number;
   paragraphCount: number;
+  resumed: boolean;
   offlineMode: boolean;
   docEntry: Record<string, unknown>;
   skillContext: Record<string, unknown>;
@@ -66,6 +81,12 @@ export type HistoryRound = {
   inputPath: string;
   outputPath: string;
   manifestPath: string;
+  progressPath: string;
+  progressStatus: string;
+  completedChunkCount: number;
+  totalChunkCount: number;
+  lastError: string;
+  lastErrorChunkId: string;
   scoreTotal: number | null;
   chunkLimit: number | null;
   inputSegmentCount: number | null;

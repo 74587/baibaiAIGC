@@ -6,6 +6,7 @@ type Props = {
   onPickFile: () => void;
   onRunRound: () => void;
   pickerLabel?: string;
+  progressStatusLabel: string;
 };
 
 function displayDocId(status: DocumentStatus): string {
@@ -17,7 +18,17 @@ function displayDocId(status: DocumentStatus): string {
   return status.docId;
 }
 
-export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel = "选择文档" }: Props) {
+function renderResumeStatus(status: DocumentStatus): string {
+  if (!status.hasNextRound || status.isComplete) {
+    return "当前文档已完成全部轮次。";
+  }
+  if (status.totalChunkCount > 0 && status.completedChunkCount > 0) {
+    return `检测到断点进度：已完成 ${status.completedChunkCount}/${status.totalChunkCount} 块，可继续执行。`;
+  }
+  return "当前轮还没有已保存的分块进度。";
+}
+
+export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel = "选择文档", progressStatusLabel }: Props) {
   const canRunNextRound = Boolean(value?.hasNextRound) && !busy;
 
   return (
@@ -51,12 +62,32 @@ export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel 
               <strong>{value.hasNextRound && value.nextRound ? `第 ${value.nextRound} 轮` : "已完成全部轮次"}</strong>
             </div>
           </div>
+          <div className="info-grid">
+            <div className="info-item">
+              <span>断点进度</span>
+              <strong>{value.totalChunkCount ? `${value.completedChunkCount}/${value.totalChunkCount}` : "暂无"}</strong>
+            </div>
+            <div className="info-item">
+              <span>进度状态</span>
+              <strong>{progressStatusLabel}</strong>
+            </div>
+          </div>
           <div className="path-box">
             <span>当前输入</span>
             <strong>{value.currentInputPath}</strong>
           </div>
+          <div className="path-box">
+            <span>续跑说明</span>
+            <strong>{renderResumeStatus(value)}</strong>
+          </div>
+          {value.lastError ? (
+            <div className="path-box">
+              <span>暂停原因</span>
+              <strong>{value.lastError}</strong>
+            </div>
+          ) : null}
           <button className="primary-button" onClick={onRunRound} disabled={!canRunNextRound}>
-            {value.hasNextRound ? "执行下一轮" : "已完成全部轮次"}
+            {value.progressStatus === "paused" ? "继续执行当前轮" : value.hasNextRound ? "执行下一轮" : "已完成全部轮次"}
           </button>
         </>
       ) : (
