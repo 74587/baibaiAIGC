@@ -16,6 +16,8 @@ export type ActivePreview = {
   revisionNumber: number | null;
   outputPath: string;
   manifestPath: string;
+  sourcePath: string;
+  docxOutputPath: string;
   kind: "round" | "revision" | "current-result";
   sourceRound: number;
   preview: OutputPreview;

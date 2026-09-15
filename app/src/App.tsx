@@ -87,6 +87,7 @@ function describePromptProfile(promptProfile: "cn" | "en"): string {
 function buildActivePreviewFromVersion(
   label: string,
   item: HistoryRound | HistoryRevision,
+  sourcePath: string,
   preview: Awaited<ReturnType<AppService["readOutputPreview"]>>,
 ): ActivePreview {
   return {
@@ -95,6 +96,8 @@ function buildActivePreviewFromVersion(
     revisionNumber: item.kind === "revision" ? item.revisionNumber : item.revisionNumber ?? null,
     outputPath: item.outputPath,
     manifestPath: item.manifestPath,
+    sourcePath,
+    docxOutputPath: item.docxOutputPath || "",
     kind: item.kind,
     sourceRound: item.kind === "revision" ? item.sourceRound ?? item.targetRound ?? 0 : item.round,
     preview,
@@ -331,6 +334,8 @@ export function App({ service, pickerLabel }: Props) {
         revisionNumber: null,
         outputPath: status.currentInputPath,
         manifestPath: status.manifestPath,
+        sourcePath: status.sourcePath,
+        docxOutputPath: "",
         kind: "round",
         sourceRound: 0,
         preview,
@@ -425,6 +430,8 @@ export function App({ service, pickerLabel }: Props) {
         revisionNumber: result.revisionNumber ?? null,
         outputPath: result.outputPath,
         manifestPath: result.manifestPath,
+        sourcePath: documentStatus.sourcePath,
+        docxOutputPath: result.docxOutputPath || "",
         kind: "current-result",
         sourceRound: result.sourceRound ?? result.round,
         preview: {
@@ -491,7 +498,11 @@ export function App({ service, pickerLabel }: Props) {
     await executeRound(null);
   }
 
-  async function handleHistoryDownload(item: HistoryRound | HistoryRevision, targetFormat: "txt" | "docx") {
+  async function handleHistoryDownload(
+    item: HistoryRound | HistoryRevision,
+    targetFormat: "txt" | "docx",
+    sourcePath: string,
+  ) {
     if (!item.outputPath) {
       setNotice("当前历史记录没有可导出的输出路径。");
       return;
@@ -504,7 +515,13 @@ export function App({ service, pickerLabel }: Props) {
         ? `第 ${item.sourceRound ?? item.targetRound} 轮修订 ${item.revisionNumber}`
         : `第 ${item.round} 轮`;
       setRuntimeStep(`正在导出 ${label} ${targetFormat.toUpperCase()}`);
-      const result = await service.exportRound(item.outputPath, targetFormat);
+      const result = await service.exportRound(
+        item.outputPath,
+        targetFormat,
+        sourcePath,
+        item.docxOutputPath,
+        item.manifestPath,
+      );
       setNotice(`${label} 已导出 ${result.format.toUpperCase()}：${result.path}`);
       setRuntimeStep(`${label} 导出完成`);
     } catch (appError) {
@@ -515,7 +532,7 @@ export function App({ service, pickerLabel }: Props) {
     }
   }
 
-  async function handlePreviewHistoryVersion(item: HistoryRound | HistoryRevision) {
+  async function handlePreviewHistoryVersion(item: HistoryRound | HistoryRevision, sourcePath: string) {
     try {
       setBusy(true);
       setError("");
@@ -525,7 +542,7 @@ export function App({ service, pickerLabel }: Props) {
       const label = item.kind === "revision"
         ? `历史预览：第 ${item.sourceRound ?? item.targetRound} 轮 / 修订 ${item.revisionNumber}`
         : `历史预览：第 ${item.round} 轮`;
-      setActivePreview(buildActivePreviewFromVersion(label, item, preview));
+      setActivePreview(buildActivePreviewFromVersion(label, item, sourcePath, preview));
       setPreviewText(preview.text);
       clearPreviewSelection();
       setCurrentPage("result");
@@ -550,7 +567,13 @@ export function App({ service, pickerLabel }: Props) {
       setError("");
       setNotice("");
       setRuntimeStep(`正在导出 ${targetFormat.toUpperCase()}`);
-      const result = await service.exportRound(exportPath, targetFormat);
+      const result = await service.exportRound(
+        exportPath,
+        targetFormat,
+        activePreview?.sourcePath || documentStatus?.sourcePath,
+        activePreview?.docxOutputPath,
+        activePreview?.manifestPath,
+      );
       setNotice(`已导出 ${result.format.toUpperCase()}：${result.path}`);
       setRuntimeStep("导出完成");
     } catch (appError) {

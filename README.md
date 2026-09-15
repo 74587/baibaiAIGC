@@ -50,7 +50,7 @@ npm install
 
 当前依赖非常少：
 
-- `python-docx`：用于 `.docx` 文本提取和回写
+- `python-docx`：用于 `.docx` 文本提取；DOCX 格式保留回写使用标准库处理原始 Word 包
 
 ## 使用建议
 * 推荐使用 web 端，然后是脚本；如果要作为 skill 使用，直接安装本仓库根目录即可。
@@ -142,6 +142,7 @@ Web 模式下可完成以下操作：
 - 配置并测试模型连接
 - 按当前记录继续执行第 1 轮或第 2 轮
 - 读取历史输出并导出 `.txt` 或 `.docx` 到 `finish/web_exports/`
+- DOCX 输入导出的 Word 会以原始文档为模板，只更新主文档正文并保留原有页面、样式、表格、图片和页眉页脚
 
 ## 脚本 API 模式用法
 
@@ -205,7 +206,7 @@ python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/�
 1. 将原始文件放入 `origin/`，或直接上传附件由系统自动保存到 `origin/chat-uploads/`
 2. 在对话中触发降 AIGC skill
 3. skill 读取记录，判断当前应执行的轮次
-4. 若输入是 `.docx`，先提取为中间 `.txt`
+4. 若输入是 `.docx`，先提取为中间 `.txt`，完成每轮后再基于原始 Word 模板生成格式保留的 `.docx`
 5. 按最多 850 字切块逐块改写
 6. 写回本轮输出到 `finish/intermediate/`
 7. 依据 `references/checklist.md` 做本轮评分

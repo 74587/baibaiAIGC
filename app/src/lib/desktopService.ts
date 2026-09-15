@@ -94,7 +94,13 @@ export const desktopService: AppService = {
     return invoke<OutputPreview>("read_source_preview", { inputPath, manifestPath, promptProfile });
   },
 
-  async exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult> {
+  async exportRound(
+    outputPath: string,
+    targetFormat: "txt" | "docx",
+    sourcePath?: string,
+    docxOutputPath?: string,
+    manifestPath?: string,
+  ): Promise<ExportResult> {
     const exportPath = await save({
       defaultPath: targetFormat === "docx" ? "当前轮结果.docx" : "当前轮结果.txt",
       filters: [{ name: "Export", extensions: [targetFormat] }],
@@ -102,6 +108,13 @@ export const desktopService: AppService = {
     if (!exportPath || Array.isArray(exportPath)) {
       throw new Error("Export cancelled");
     }
-    return invoke<ExportResult>("export_round_output", { outputPath, exportPath, targetFormat });
+    return invoke<ExportResult>("export_round_output", {
+      outputPath,
+      exportPath,
+      targetFormat,
+      sourcePath,
+      docxOutputPath,
+      manifestPath,
+    });
   },
 };

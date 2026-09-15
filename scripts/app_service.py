@@ -6,11 +6,19 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id, normalize_record_status, update_revision, update_round
+from aigc_records import (
+    delete_document,
+    delete_rounds,
+    list_records,
+    normalize_doc_id,
+    normalize_record_status,
+    update_revision,
+    update_round,
+)
 from aigc_round_service import MAX_ROUNDS, RoundPausedError, RoundStoppedError, build_progress_path, get_chunk_metric, normalize_path, request_stop, run_round
 from app_config import normalize_model_config
 from chunking import build_manifest, load_manifest, split_text_to_paragraphs
-from docx_pipeline import _split_text_into_blocks, write_docx_text
+from docx_pipeline import _split_text_into_blocks, render_docx_from_template, write_docx_text
 from llm_client import llm_completion, test_llm_connection
 from managed_sources import get_display_name_for_source
 from skill_round_helper import build_execution_context, build_round_context, ensure_skill_input_text, get_document_round_state
@@ -111,6 +119,7 @@ def _upsert_history_record(
     completed_chunk_count: int | None = None,
     total_chunk_count: int | None = None,
     stop_reason: str | None = None,
+    docx_output_path: str | None = None,
 ) -> dict[str, Any]:
     if revision_number is not None:
         return update_revision(
@@ -137,6 +146,7 @@ def _upsert_history_record(
             completed_chunk_count=completed_chunk_count,
             total_chunk_count=total_chunk_count,
             stop_reason=stop_reason,
+            docx_output_path=docx_output_path,
         )
     return update_round(
         doc_id=doc_id,
@@ -162,6 +172,7 @@ def _upsert_history_record(
         completed_chunk_count=completed_chunk_count,
         total_chunk_count=total_chunk_count,
         stop_reason=stop_reason,
+        docx_output_path=docx_output_path,
     )
 
 
@@ -288,6 +299,7 @@ def _map_history_round(item: dict[str, Any]) -> dict[str, Any]:
         "sourceRound": item.get("source_round"),
         "targetRound": item.get("target_round"),
         "revisionNumber": item.get("revision_number"),
+        "docxOutputPath": str(item.get("docx_output_path", "") or ""),
         "revisions": [_map_history_revision(revision) for revision in item.get("revisions", []) if isinstance(revision, dict)],
     }
 
@@ -335,6 +347,7 @@ def _map_history_revision(item: dict[str, Any]) -> dict[str, Any]:
         "basedOnManifestPath": str(item.get("based_on_manifest_path", "") or ""),
         "sourceRound": item.get("source_round"),
         "targetRound": item.get("target_round"),
+        "docxOutputPath": str(item.get("docx_output_path", "") or ""),
     }
 
 
@@ -744,6 +757,16 @@ def run_round_for_app(
         )
         raise
 
+    docx_output_path = ""
+    if context.docx_output_path is not None:
+        render_docx_from_template(
+            context.source_path,
+            context.output_text_path,
+            context.docx_output_path,
+            context.manifest_path,
+        )
+        docx_output_path = str(context.docx_output_path)
+
     result["skill_context"] = context.to_dict()
     if result["skill_context"].get("is_revision"):
         doc_entry = _upsert_history_record(
@@ -767,6 +790,7 @@ def run_round_for_app(
             status="completed",
             completed_chunk_count=int(result["completed_chunk_count"]),
             total_chunk_count=int(result["input_segment_count"]),
+            docx_output_path=relative_to_workspace_path(docx_output_path),
         )
     else:
         doc_entry = _upsert_history_record(
@@ -790,6 +814,7 @@ def run_round_for_app(
             status="completed",
             completed_chunk_count=int(result["completed_chunk_count"]),
             total_chunk_count=int(result["input_segment_count"]),
+            docx_output_path=relative_to_workspace_path(docx_output_path),
         )
 
     return {
@@ -813,6 +838,7 @@ def run_round_for_app(
         "sourceRound": result.get("source_round"),
         "targetRound": result.get("target_round"),
         "revisionNumber": result.get("revision_number"),
+        "docxOutputPath": docx_output_path,
     }
 
 
@@ -846,7 +872,14 @@ def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def export_round_output(output_path: str, export_path: str, target_format: str) -> dict[str, Any]:
+def export_round_output(
+    output_path: str,
+    export_path: str,
+    target_format: str,
+    source_path: str | None = None,
+    docx_output_path: str | None = None,
+    manifest_path: str | None = None,
+) -> dict[str, Any]:
     normalized_output_path = normalize_path(Path(output_path))
     normalized_export_path = Path(export_path).resolve()
     normalized_export_path.parent.mkdir(parents=True, exist_ok=True)
@@ -859,6 +892,35 @@ def export_round_output(output_path: str, export_path: str, target_format: str) 
         }
 
     if target_format == "docx":
+        normalized_docx_output_path = (
+            normalize_path(Path(docx_output_path))
+            if docx_output_path
+            else None
+        )
+        if normalized_docx_output_path is not None and normalized_docx_output_path.is_file():
+            shutil.copyfile(normalized_docx_output_path, normalized_export_path)
+            return {
+                "format": "docx",
+                "path": str(normalized_export_path),
+            }
+
+        normalized_source_path = normalize_path(Path(source_path)) if source_path else None
+        if normalized_source_path is not None and normalized_source_path.suffix.lower() == ".docx":
+            render_docx_from_template(
+                normalized_source_path,
+                normalized_output_path,
+                normalized_export_path,
+                normalize_path(Path(manifest_path)) if manifest_path else None,
+            )
+            return {
+                "format": "docx",
+                "path": str(normalized_export_path),
+            }
+        if normalized_source_path is not None and normalized_source_path.suffix.lower() != ".txt":
+            raise ValueError(f"Unsupported DOCX source template: {normalized_source_path}")
+        if normalized_source_path is None:
+            raise ValueError("DOCX export requires the original DOCX source path.")
+
         text = normalized_output_path.read_text(encoding="utf-8")
         blocks = _split_text_into_blocks(text)
         write_docx_text(blocks, normalized_export_path)
@@ -952,6 +1014,9 @@ def cli_main() -> None:
     export_parser.add_argument("output_path")
     export_parser.add_argument("export_path")
     export_parser.add_argument("target_format", choices=["txt", "docx"])
+    export_parser.add_argument("--source-path", default=None)
+    export_parser.add_argument("--docx-output-path", default=None)
+    export_parser.add_argument("--manifest-path", default=None)
 
     preview_parser = subparsers.add_parser("read-output")
     preview_parser.add_argument("output_path")
@@ -998,7 +1063,14 @@ def cli_main() -> None:
             payload = test_model_connection(load_model_config_payload(args.model_config_json, args.config_file))
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "export-round":
-            payload = export_round_output(args.output_path, args.export_path, args.target_format)
+            payload = export_round_output(
+                args.output_path,
+                args.export_path,
+                args.target_format,
+                source_path=args.source_path,
+                docx_output_path=args.docx_output_path,
+                manifest_path=args.manifest_path,
+            )
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "read-output":
             payload = read_output_text(args.output_path)

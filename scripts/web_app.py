@@ -345,9 +345,30 @@ def get_export_round() -> tuple[Response, int] | Response:
     try:
         output_path = require_managed_output_path(require_query_value("outputPath"))
         target_format = require_query_value("targetFormat")
+        source_path_value = request.args.get("sourcePath", "").strip()
+        source_path = require_managed_source_path(source_path_value) if source_path_value else None
+        docx_output_path_value = request.args.get("docxOutputPath", "").strip()
+        docx_output_path = (
+            require_managed_output_path(docx_output_path_value)
+            if docx_output_path_value
+            else None
+        )
+        manifest_path_value = request.args.get("manifestPath", "").strip()
+        manifest_path = (
+            require_managed_output_path(manifest_path_value)
+            if manifest_path_value
+            else None
+        )
         stem = Path(output_path).stem or "current-round"
         export_path = EXPORT_DIR / f"{stem}.{target_format}"
-        result = export_round_output(output_path, str(export_path), target_format)
+        result = export_round_output(
+            output_path,
+            str(export_path),
+            target_format,
+            source_path=source_path,
+            docx_output_path=docx_output_path,
+            manifest_path=manifest_path,
+        )
         file_path = Path(result["path"])
         mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         if target_format == "txt":

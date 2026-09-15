@@ -321,9 +321,28 @@ export const webService: AppService = {
     );
   },
 
-  async exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult> {
+  async exportRound(
+    outputPath: string,
+    targetFormat: "txt" | "docx",
+    sourcePath?: string,
+    docxOutputPath?: string,
+    manifestPath?: string,
+  ): Promise<ExportResult> {
+    const query = new URLSearchParams({
+      outputPath,
+      targetFormat,
+    });
+    if (sourcePath) {
+      query.set("sourcePath", sourcePath);
+    }
+    if (docxOutputPath) {
+      query.set("docxOutputPath", docxOutputPath);
+    }
+    if (manifestPath) {
+      query.set("manifestPath", manifestPath);
+    }
     const response = await fetch(
-      `${WEB_API_BASE}/api/export-round?outputPath=${encodeURIComponent(outputPath)}&targetFormat=${targetFormat}`,
+      `${WEB_API_BASE}/api/export-round?${query.toString()}`,
     );
     if (!response.ok) {
       throw new Error(`Export failed: ${response.status}`);

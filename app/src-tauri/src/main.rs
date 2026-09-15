@@ -341,14 +341,31 @@ async fn read_source_preview(input_path: String, manifest_path: String, prompt_p
 }
 
 #[tauri::command]
-async fn export_round_output(output_path: String, export_path: String, target_format: String) -> Result<serde_json::Value, String> {
+async fn export_round_output(
+    output_path: String,
+    export_path: String,
+    target_format: String,
+    source_path: Option<String>,
+    docx_output_path: Option<String>,
+    manifest_path: Option<String>,
+) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
-        let output = run_python_json(&[
+        let mut args = vec![
             "export-round".to_string(),
             output_path,
             export_path,
             target_format,
-        ])?;
+        ];
+        if let Some(value) = source_path {
+            args.extend(["--source-path".to_string(), value]);
+        }
+        if let Some(value) = docx_output_path {
+            args.extend(["--docx-output-path".to_string(), value]);
+        }
+        if let Some(value) = manifest_path {
+            args.extend(["--manifest-path".to_string(), value]);
+        }
+        let output = run_python_json(&args)?;
         serde_json::from_str(&output).map_err(|error| error.to_string())
     })
     .await

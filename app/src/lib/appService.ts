@@ -34,5 +34,11 @@ export interface AppService {
   readOutput(outputPath: string): Promise<{ path: string; text: string }>;
   readOutputPreview(outputPath: string, manifestPath: string): Promise<OutputPreview>;
   readSourcePreview(inputPath: string, manifestPath: string, promptProfile: "cn" | "en"): Promise<OutputPreview>;
-  exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult>;
+  exportRound(
+    outputPath: string,
+    targetFormat: "txt" | "docx",
+    sourcePath?: string,
+    docxOutputPath?: string,
+    manifestPath?: string,
+  ): Promise<ExportResult>;
 }

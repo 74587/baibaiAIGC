@@ -10,8 +10,8 @@ type Props = {
   onToggle: () => void;
   onSelect: (item: HistoryDocumentSummary) => void;
   onDelete: (docId: string, fromRound?: number) => void;
-  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx") => void;
-  onPreview: (item: HistoryRound | HistoryRevision) => void;
+  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx", sourcePath: string) => void;
+  onPreview: (item: HistoryRound | HistoryRevision, sourcePath: string) => void;
 };
 
 function formatTimestamp(value: string): string {
@@ -80,18 +80,19 @@ function describeLifecycleStatus(status: HistoryRound["status"] | HistoryRevisio
 function renderVersionActions(
   item: HistoryRound | HistoryRevision,
   busy: boolean,
-  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx") => void,
-  onPreview: (item: HistoryRound | HistoryRevision) => void,
+  sourcePath: string,
+  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx", sourcePath: string) => void,
+  onPreview: (item: HistoryRound | HistoryRevision, sourcePath: string) => void,
 ) {
   return (
     <div className="button-row">
-      <button className="secondary-button" onClick={() => onPreview(item)} disabled={busy || !item.outputPath || !item.manifestPath}>
+      <button className="secondary-button" onClick={() => onPreview(item, sourcePath)} disabled={busy || !item.outputPath || !item.manifestPath}>
         预览并选择
       </button>
-      <button className="secondary-button" onClick={() => onDownload(item, "txt")} disabled={busy || !item.outputPath}>
+      <button className="secondary-button" onClick={() => onDownload(item, "txt", sourcePath)} disabled={busy || !item.outputPath}>
         下载 TXT
       </button>
-      <button className="primary-button" onClick={() => onDownload(item, "docx")} disabled={busy || !item.outputPath}>
+      <button className="primary-button" onClick={() => onDownload(item, "docx", sourcePath)} disabled={busy || !item.outputPath}>
         下载 Word
       </button>
     </div>
@@ -204,7 +205,7 @@ export function HistoryCard({
                               <span>输出路径</span>
                               <strong>{roundItem.outputPath || "暂无"}</strong>
                             </div>
-                            {renderVersionActions(roundItem, busy, onDownload, onPreview)}
+                            {renderVersionActions(roundItem, busy, item.sourcePath, onDownload, onPreview)}
                             <div className="button-row">
                               <button
                                 className="secondary-button danger-button"
@@ -233,7 +234,7 @@ export function HistoryCard({
                                       <span>输出路径</span>
                                       <strong>{revision.outputPath || "暂无"}</strong>
                                     </div>
-                                    {renderVersionActions(revision, busy, onDownload, onPreview)}
+                                    {renderVersionActions(revision, busy, item.sourcePath, onDownload, onPreview)}
                                   </article>
                                 ))}
                               </div>

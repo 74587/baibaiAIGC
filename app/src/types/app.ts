@@ -149,6 +149,7 @@ export type RoundResult = {
   sourceRound?: number | null;
   targetRound?: number | null;
   revisionNumber?: number | null;
+  docxOutputPath?: string;
   docEntry: Record<string, unknown>;
   skillContext: Record<string, unknown>;
 };
@@ -182,6 +183,7 @@ export type HistoryRound = {
   sourceRound: number | null;
   targetRound: number | null;
   revisionNumber: number | null;
+  docxOutputPath: string;
   revisions: HistoryRevision[];
 };
 
@@ -213,6 +215,7 @@ export type HistoryRevision = {
   basedOnManifestPath: string;
   sourceRound: number | null;
   targetRound: number | null;
+  docxOutputPath: string;
 };
 
 export type DocumentHistory = {
