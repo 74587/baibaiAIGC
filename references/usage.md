@@ -31,7 +31,7 @@
 
 当用户是在聊天框中直接触发降 AIGC skill 时，默认且必须优先使用对话 skill 模式完成当前轮处理，不应先切换到脚本 API 模式。
 
-如果是在聊天框中按 skill 模式执行，推荐复用 `scripts/skill_round_helper.py`：它负责判断当前轮次、准备 `.txt/.docx` 输入、生成本轮中间文件路径，并在改写完成后继续通过共享 round service 落盘和更新记录。
+如果是在聊天框中按 skill 模式执行，推荐复用 `scripts/skill_round_helper.py`：它负责判断当前轮次、准备 `.txt/.docx` 输入、生成本轮 TXT、DOCX 和 manifest 路径，并在改写完成后继续通过共享 round service 落盘和更新记录。
 
 `scripts/run_aigc_round.py` 仅用于用户明确要求命令行、批处理或脚本 API 自动调用模型的场景，不应作为聊天模式下的默认方案。
 
@@ -71,7 +71,7 @@
 python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/毕业论文_原始_utf8.txt finish/intermediate/毕业论文_原始_utf8_round1.txt finish/intermediate/毕业论文_原始_utf8_round1_manifest.json --chunk-limit 850
 ```
 
-这个命令需要已经配置模型 API，脚本会先切块，再逐块处理，最后按原段落结构还原，并同步更新 `finish/aigc_records.json`。
+这个命令需要已经配置模型 API，脚本会先切块，再逐块处理，最后按原段落结构还原，并同步更新 `finish/aigc_records.json`。对 DOCX 输入，Skill 模式会额外基于原始 Word 模板生成格式保留的 DOCX。
 
 ### 示例 2.2：通过脚本直连模型 API
 
@@ -111,3 +111,4 @@ python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/�
 - 单轮内部必须分段处理，不能整篇一次性改写。
 - 如果原文已经较自然，应最小化修改。
 - 默认保持论文语体，不改成营销文案或过度口语化表达。
+- DOCX 回写只更新主文档正文段落，原始文档的页面、样式、表格、图片和页眉页脚继续保留。

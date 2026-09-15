@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from aigc_records import ROOT_DIR, get_round_record, load_records, normalize_record_status
+from aigc_records import (
+    ROOT_DIR,
+    get_round_record,
+    load_records,
+    normalize_record_status,
+    set_docx_output_path,
+)
 from aigc_round_service import (
     build_progress_path,
     get_max_rounds,
@@ -15,7 +21,7 @@ from aigc_round_service import (
     relative_to_root,
     run_round,
 )
-from docx_pipeline import read_docx_text
+from docx_pipeline import read_docx_text, render_docx_from_template
 
 
 Transform = Callable[[str, str, int, str], str]
@@ -33,6 +39,7 @@ class RoundContext:
     input_text_path: Path
     output_text_path: Path
     manifest_path: Path
+    docx_output_path: Path | None
     source_kind: str
     extracted_from_docx: bool
     apply_mode: str | None = None
@@ -55,6 +62,7 @@ class RoundContext:
             "input_text_path": str(self.input_text_path),
             "output_text_path": str(self.output_text_path),
             "manifest_path": str(self.manifest_path),
+            "docx_output_path": str(self.docx_output_path) if self.docx_output_path else None,
             "source_kind": self.source_kind,
             "extracted_from_docx": self.extracted_from_docx,
             "apply_mode": self.apply_mode,
@@ -136,6 +144,7 @@ def build_round_context(source_path: Path | str, round_number: int | None = None
     stem = _doc_stem(doc_id)
     output_text_path = INTERMEDIATE_DIR / f"{stem}_round{resolved_round}.txt"
     manifest_path = INTERMEDIATE_DIR / f"{stem}_round{resolved_round}_manifest.json"
+    docx_output_path = _build_docx_output_path(normalized_source, stem, resolved_round)
 
     return RoundContext(
         doc_id=doc_id,
@@ -146,6 +155,7 @@ def build_round_context(source_path: Path | str, round_number: int | None = None
         input_text_path=input_text_path,
         output_text_path=output_text_path,
         manifest_path=manifest_path,
+        docx_output_path=docx_output_path,
         source_kind=normalized_source.suffix.lower() or ".txt",
         extracted_from_docx=extracted_from_docx,
     )
@@ -268,6 +278,12 @@ def _build_targeted_context(
             input_text_path=based_on_output_path,
             output_text_path=output_text_path,
             manifest_path=manifest_path,
+            docx_output_path=_build_docx_output_path(
+                normalized_source,
+                _doc_stem(doc_id),
+                target_round,
+                revision_number,
+            ),
             source_kind=normalized_source.suffix.lower() or ".txt",
             extracted_from_docx=False,
             apply_mode=apply_mode,
@@ -298,6 +314,11 @@ def _build_targeted_context(
         input_text_path=based_on_output_path,
         output_text_path=output_text_path,
         manifest_path=manifest_path,
+        docx_output_path=_build_docx_output_path(
+            normalized_source,
+            _doc_stem(doc_id),
+            target_round,
+        ),
         source_kind=normalized_source.suffix.lower() or ".txt",
         extracted_from_docx=False,
         apply_mode=apply_mode,
@@ -450,6 +471,20 @@ def run_skill_round(
         based_on_output_path=context.based_on_output_path,
         based_on_manifest_path=context.based_on_manifest_path,
     )
+    if context.docx_output_path is not None:
+        render_docx_from_template(
+            context.source_path,
+            context.output_text_path,
+            context.docx_output_path,
+            context.manifest_path,
+        )
+        set_docx_output_path(
+            context.doc_id,
+            context.round_number,
+            relative_to_root(context.docx_output_path),
+            revision_number=context.revision_number,
+        )
+        result["docx_output_path"] = str(context.docx_output_path)
     result["skill_context"] = context.to_dict()
     return result
 
@@ -465,6 +500,18 @@ def _build_doc_id(source_path: Path) -> str:
 
 def _doc_stem(doc_id: str) -> str:
     return Path(doc_id).stem
+
+
+def _build_docx_output_path(
+    source_path: Path,
+    stem: str,
+    round_number: int,
+    revision_number: int | None = None,
+) -> Path | None:
+    if source_path.suffix.lower() != ".docx":
+        return None
+    revision_suffix = f"_rev{revision_number}" if revision_number is not None else ""
+    return INTERMEDIATE_DIR / f"{stem}_round{round_number}{revision_suffix}.docx"
 
 
 def _get_rounds(doc_id: str) -> list[dict]:

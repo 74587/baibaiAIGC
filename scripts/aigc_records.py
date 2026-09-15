@@ -85,6 +85,7 @@ class RevisionRecord:
     completed_chunk_count: Optional[int] = None
     total_chunk_count: Optional[int] = None
     stop_reason: Optional[str] = None
+    docx_output_path: Optional[str] = None
     timestamp: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -120,6 +121,7 @@ class RoundRecord:
     completed_chunk_count: Optional[int] = None
     total_chunk_count: Optional[int] = None
     stop_reason: Optional[str] = None
+    docx_output_path: Optional[str] = None
     revisions: Optional[List[Dict[str, Any]]] = None
     timestamp: str = ""
 
@@ -163,6 +165,7 @@ def _prune_record_dict(data: Dict[str, Any]) -> Dict[str, Any]:
         "completed_chunk_count",
         "total_chunk_count",
         "stop_reason",
+        "docx_output_path",
         "source_round",
         "target_round",
         "revisions",
@@ -265,7 +268,7 @@ def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
                 value = normalized_item.get(field)
                 if isinstance(value, str):
                     normalized_item[field] = normalize_record_path(value)
-            for field in ("based_on_output_path", "based_on_manifest_path", "progress_path"):
+            for field in ("based_on_output_path", "based_on_manifest_path", "progress_path", "docx_output_path"):
                 value = normalized_item.get(field)
                 if isinstance(value, str):
                     normalized_item[field] = normalize_record_path(value)
@@ -299,7 +302,7 @@ def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
                         value = normalized_revision.get(field)
                         if isinstance(value, str):
                             normalized_revision[field] = normalize_record_path(value)
-                    for field in ("based_on_output_path", "based_on_manifest_path", "progress_path"):
+                    for field in ("based_on_output_path", "based_on_manifest_path", "progress_path", "docx_output_path"):
                         value = normalized_revision.get(field)
                         if isinstance(value, str):
                             normalized_revision[field] = normalize_record_path(value)
@@ -356,7 +359,7 @@ def _collect_round_file_paths(rounds: List[Dict[str, Any]]) -> set[Path]:
     for item in rounds:
         if not isinstance(item, dict):
             continue
-        for field in ("input_path", "output_path", "manifest_path"):
+        for field in ("input_path", "output_path", "manifest_path", "docx_output_path"):
             value = item.get(field)
             if not isinstance(value, str):
                 continue
@@ -434,6 +437,7 @@ def update_round(
     completed_chunk_count: Optional[int] = None,
     total_chunk_count: Optional[int] = None,
     stop_reason: Optional[str] = None,
+    docx_output_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Update (or create) the record for a single document round.
 
@@ -462,6 +466,7 @@ def update_round(
         None,
     )
     existing_revisions = existing_round.get("revisions") if isinstance(existing_round, dict) else None
+    existing_docx_output_path = existing_round.get("docx_output_path") if isinstance(existing_round, dict) else None
 
     filtered_rounds: List[Dict[str, Any]] = [r for r in rounds if not isinstance(r, dict) or r.get("round") != round_number]
 
@@ -489,6 +494,13 @@ def update_round(
         completed_chunk_count=completed_chunk_count,
         total_chunk_count=total_chunk_count,
         stop_reason=str(stop_reason or "").strip() or None,
+        docx_output_path=(
+            normalize_record_path(docx_output_path)
+            if docx_output_path
+            else normalize_record_path(existing_docx_output_path)
+            if isinstance(existing_docx_output_path, str) and existing_docx_output_path.strip()
+            else None
+        ),
         revisions=[revision for revision in existing_revisions if isinstance(revision, dict)] if isinstance(existing_revisions, list) else None,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
@@ -530,6 +542,7 @@ def update_revision(
     completed_chunk_count: Optional[int] = None,
     total_chunk_count: Optional[int] = None,
     stop_reason: Optional[str] = None,
+    docx_output_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_doc_id = normalize_doc_id(doc_id)
     records = load_records_normalized()
@@ -559,6 +572,15 @@ def update_revision(
         revision for revision in revisions
         if not isinstance(revision, dict) or revision.get("revision_number") != revision_number
     ]
+    existing_revision = next(
+        (
+            revision
+            for revision in revisions
+            if isinstance(revision, dict) and revision.get("revision_number") == revision_number
+        ),
+        None,
+    )
+    existing_docx_output_path = existing_revision.get("docx_output_path") if isinstance(existing_revision, dict) else None
 
     record = RevisionRecord(
         revision_number=revision_number,
@@ -584,12 +606,71 @@ def update_revision(
         completed_chunk_count=completed_chunk_count,
         total_chunk_count=total_chunk_count,
         stop_reason=str(stop_reason or "").strip() or None,
+        docx_output_path=(
+            normalize_record_path(docx_output_path)
+            if docx_output_path
+            else normalize_record_path(existing_docx_output_path)
+            if isinstance(existing_docx_output_path, str) and existing_docx_output_path.strip()
+            else None
+        ),
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
 
     filtered_revisions.append(record.to_dict())
     filtered_revisions.sort(key=lambda revision: revision.get("revision_number", 0))
     round_entry["revisions"] = filtered_revisions
+    save_records(records)
+    return doc_entry
+
+
+def set_docx_output_path(
+    doc_id: str,
+    round_number: int,
+    docx_output_path: str,
+    revision_number: Optional[int] = None,
+) -> Dict[str, Any]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    records = load_records_normalized()
+    doc_entry = records.get(normalized_doc_id)
+    if not isinstance(doc_entry, dict):
+        raise ValueError(f"Document record not found: {normalized_doc_id}")
+
+    rounds = doc_entry.get("rounds")
+    if not isinstance(rounds, list):
+        raise ValueError(f"Round {round_number} not found for document: {normalized_doc_id}")
+    round_entry = next(
+        (
+            item
+            for item in rounds
+            if isinstance(item, dict) and item.get("round") == round_number
+        ),
+        None,
+    )
+    if not isinstance(round_entry, dict):
+        raise ValueError(f"Round {round_number} not found for document: {normalized_doc_id}")
+
+    target: Dict[str, Any] = round_entry
+    if revision_number is not None:
+        revisions = round_entry.get("revisions")
+        if not isinstance(revisions, list):
+            raise ValueError(
+                f"Revision {revision_number} not found for round {round_number}: {normalized_doc_id}"
+            )
+        target = next(
+            (
+                revision
+                for revision in revisions
+                if isinstance(revision, dict)
+                and revision.get("revision_number") == revision_number
+            ),
+            None,
+        )
+        if not isinstance(target, dict):
+            raise ValueError(
+                f"Revision {revision_number} not found for round {round_number}: {normalized_doc_id}"
+            )
+
+    target["docx_output_path"] = normalize_record_path(docx_output_path)
     save_records(records)
     return doc_entry
 

@@ -94,10 +94,10 @@ user-invocable: true
 
 相关职责如下：
 
-- `scripts/skill_round_helper.py`：服务对话 skill 模式，负责判定轮次、准备 `.txt/.docx` 输入、生成本轮 `output_text_path` 与 `manifest_path`，并调用共享 round service。
+- `scripts/skill_round_helper.py`：服务对话 skill 模式，负责判定轮次、准备 `.txt/.docx` 输入、生成本轮文本、manifest 和 DOCX 输出路径，并调用共享 round service。
 - `scripts/aigc_round_service.py`：共享单轮处理引擎，负责读取 prompt、构建 manifest、逐块调用改写逻辑、还原文本、写入中间文件，并更新 `finish/aigc_records.json`。
 - `scripts/run_aigc_round.py`：服务脚本 API 模式，基于 `aigc_round_service.py` 读取输入文本并调用外部 OpenAI 兼容接口；当未提供完整 API 配置时，只允许显式 `--dry-run` 做切块与 prompt 校验。
-- `scripts/docx_pipeline.py`：负责 `.docx` 与纯文本之间的提取和导出。
+- `scripts/docx_pipeline.py`：负责 `.docx` 与纯文本之间的提取，以及基于原始 DOCX 模板的格式保留回写。
 
 实现上的标准化流程以脚本实际行为为准：
 
@@ -106,6 +106,7 @@ user-invocable: true
 - 块结果按 manifest 还原为整篇文本。
 - 本轮结果默认写入 `finish/intermediate/`。
 - 记录默认写入 `finish/aigc_records.json`。
+- DOCX 输入每轮完成后同时生成 TXT 和基于原始模板回写的 DOCX；TXT 输入仍只生成文本结果。
 
 注意：当前实现会尽量按段落、句子和较自然的分隔位置切块，但在极长片段场景下，底层脚本仍可能继续做更细粒度拆分。不要在 skill 文案中承诺比代码更严格的切块保证。
 
@@ -136,7 +137,7 @@ user-invocable: true
 - `scripts/skill_round_helper.py` 会在需要时通过 `scripts/docx_pipeline.py` 的读写能力把 `.docx` 提取为 `finish/intermediate/*_extracted.txt` 再进入单轮处理。
 - 聊天中上传的 `.txt/.docx` 会先自动落盘为 `origin/chat-uploads/` 下的受管源文件，并继续复用现有 records/intermediate 流程。
 - 本轮处理中间结果默认以 `.txt` 落在 `finish/intermediate/`。
-- 如果需要把结果再导出为 `.docx`，应复用现有脚本或 app/Web 导出流程，而不是假定每次对话都会自动生成最终 `.docx`。
+- 如果输入是 `.docx`，本轮完成后会在 `finish/intermediate/` 同时生成格式保留的 `.docx`；该文件以原始 Word 为模板，只更新主文档正文段落。
 
 如果用户提供多段内容：逐段处理，但保持整体段落顺序和编号格式不变。
 
@@ -154,10 +155,10 @@ user-invocable: true
 
 - 如果 `finish/` 或 `finish/intermediate/` 不存在，先创建对应目录。
 - 约定文件命名示例：
-  - 第 1 轮：`finish/intermediate/原文件名_round1.txt`
-  - 第 2 轮：`finish/intermediate/原文件名_round2.txt`
+- 第 1 轮：`finish/intermediate/原文件名_round1.txt`
+- 第 2 轮：`finish/intermediate/原文件名_round2.txt`
 - 每一轮还应同时写出结构清单，例如 `finish/intermediate/原文件名_round1_manifest.json`。
-- 当输入来自 `.docx` 时，中间结果可以只以 `.txt` 形式落盘。
+- 当输入来自 `.docx` 时，还应生成对应的 `finish/intermediate/原文件名_roundN.docx`，并在记录中保存 `docx_output_path`。
 
 禁止使用以下做法：
 
@@ -176,6 +177,7 @@ user-invocable: true
 - 优先处理论文和技术文档中的书面化、凝练化、过于整齐的表达。
 - 保持字数不要明显膨胀。
 - 生成“第 1 轮结果”，并按原段落结构还原后写入 `finish/intermediate/` 中对应文件。
+- 如果输入是 `.docx`，同时基于原始 Word 模板生成格式保留的第 1 轮 `.docx`。
 
 ### 第 2 轮
 
@@ -188,6 +190,7 @@ user-invocable: true
 - 重点清除 AI 套话、空泛提升、宣传腔、机械连接词、三段式列举、否定式排比和破折号滥用。
 - 进一步调整句式节奏，让文本更自然。
 - 生成“第 2 轮结果”，并按原段落结构还原后写入 `finish/intermediate/` 中对应文件。
+- 如果输入是 `.docx`，同时基于原始 Word 模板生成格式保留的第 2 轮 `.docx`。
 
 ### 局部续跑与修订
 
