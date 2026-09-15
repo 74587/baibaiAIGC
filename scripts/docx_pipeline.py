@@ -20,6 +20,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterable
 
@@ -29,6 +33,15 @@ except ImportError as exc:  # pragma: no cover - import guard
     raise SystemExit(
         "Missing dependency python-docx. Install it with: pip install python-docx"
     ) from exc
+
+
+WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
+MAIN_DOCUMENT_PART = "word/document.xml"
+W_BODY = f"{{{WORD_NAMESPACE}}}body"
+W_PARAGRAPH = f"{{{WORD_NAMESPACE}}}p"
+W_TEXT = f"{{{WORD_NAMESPACE}}}t"
+XML_SPACE = f"{{{XML_NAMESPACE}}}space"
 
 
 def read_docx_text(path: Path) -> str:
@@ -41,6 +54,146 @@ def read_docx_text(path: Path) -> str:
         if paragraph:
             non_empty_blocks.append(paragraph)
     return "\n\n".join(non_empty_blocks)
+
+
+def _main_body_paragraphs(root: ET.Element) -> list[ET.Element]:
+    body = root.find(f".//{W_BODY}")
+    if body is None:
+        raise ValueError("DOCX main document body is missing.")
+    return [child for child in list(body) if child.tag == W_PARAGRAPH]
+
+
+def _paragraph_xml_text(paragraph: ET.Element) -> str:
+    return "".join(node.text or "" for node in paragraph.iter(W_TEXT))
+
+
+def _replace_paragraph_xml_text(paragraph: ET.Element, new_text: str) -> None:
+    text_nodes = list(paragraph.iter(W_TEXT))
+    if not text_nodes:
+        raise ValueError("DOCX paragraph has no writable text node.")
+
+    old_lengths = [len(node.text or "") for node in text_nodes]
+    old_total = sum(old_lengths)
+    remaining = new_text
+    for index, node in enumerate(text_nodes):
+        if index == len(text_nodes) - 1:
+            value = remaining
+        elif old_total:
+            target_length = round(len(new_text) * old_lengths[index] / old_total)
+            value = remaining[:target_length]
+            remaining = remaining[target_length:]
+        else:
+            value = ""
+
+        node.text = value
+        if value.startswith((" ", "\t")) or value.endswith((" ", "\t")):
+            node.set(XML_SPACE, "preserve")
+        else:
+            node.attrib.pop(XML_SPACE, None)
+
+
+def _read_manifest_paragraph_count(path: Path) -> int:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid DOCX manifest: {path}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("paragraph_count"), int):
+        raise ValueError(f"DOCX manifest has no paragraph count: {path}")
+    return int(data["paragraph_count"])
+
+
+def _validate_docx_paragraph_counts(
+    template_count: int,
+    output_count: int,
+    manifest_path: Path | None,
+) -> None:
+    if template_count != output_count:
+        raise ValueError(
+            f"DOCX paragraph count mismatch: template has {template_count}, "
+            f"output has {output_count}."
+        )
+    if manifest_path is not None:
+        manifest_count = _read_manifest_paragraph_count(manifest_path)
+        if manifest_count != template_count:
+            raise ValueError(
+                f"DOCX paragraph count mismatch: manifest has {manifest_count}, "
+                f"template has {template_count}."
+            )
+
+
+def render_docx_from_template(
+    template_path: Path,
+    output_text_path: Path,
+    output_docx_path: Path,
+    manifest_path: Path | None = None,
+) -> Path:
+    """Render text into an existing DOCX package without rebuilding it."""
+    normalized_template_path = Path(template_path).resolve()
+    normalized_output_text_path = Path(output_text_path).resolve()
+    normalized_output_docx_path = Path(output_docx_path).resolve()
+    normalized_manifest_path = Path(manifest_path).resolve() if manifest_path is not None else None
+
+    if normalized_template_path.suffix.lower() != ".docx":
+        raise ValueError(f"DOCX template must be a .docx file: {normalized_template_path}")
+    if not normalized_template_path.is_file():
+        raise ValueError(f"DOCX template not found: {normalized_template_path}")
+    if not normalized_output_text_path.is_file():
+        raise ValueError(f"DOCX output text not found: {normalized_output_text_path}")
+    if normalized_manifest_path is not None and not normalized_manifest_path.is_file():
+        raise ValueError(f"DOCX manifest not found: {normalized_manifest_path}")
+    if normalized_template_path == normalized_output_docx_path:
+        raise ValueError("DOCX output must not overwrite the template.")
+
+    output_blocks = _split_text_into_blocks(
+        normalized_output_text_path.read_text(encoding="utf-8")
+    )
+
+    ET.register_namespace("w", WORD_NAMESPACE)
+    temp_path: Path | None = None
+    try:
+        with zipfile.ZipFile(normalized_template_path, "r") as source_archive:
+            if MAIN_DOCUMENT_PART not in source_archive.namelist():
+                raise ValueError("DOCX main document part is missing.")
+
+            root = ET.fromstring(source_archive.read(MAIN_DOCUMENT_PART))
+            source_paragraphs = [
+                paragraph
+                for paragraph in _main_body_paragraphs(root)
+                if _paragraph_xml_text(paragraph).strip()
+            ]
+            _validate_docx_paragraph_counts(
+                len(source_paragraphs),
+                len(output_blocks),
+                normalized_manifest_path,
+            )
+            for paragraph, output_text in zip(source_paragraphs, output_blocks):
+                _replace_paragraph_xml_text(paragraph, output_text)
+            updated_document = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+            normalized_output_docx_path.parent.mkdir(parents=True, exist_ok=True)
+            file_descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f"{normalized_output_docx_path.stem}-",
+                suffix=".docx",
+                dir=normalized_output_docx_path.parent,
+            )
+            os.close(file_descriptor)
+            temp_path = Path(temporary_name)
+
+            with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as target_archive:
+                for item in source_archive.infolist():
+                    data = (
+                        updated_document
+                        if item.filename == MAIN_DOCUMENT_PART
+                        else source_archive.read(item.filename)
+                    )
+                    target_archive.writestr(item, data)
+
+        os.replace(temp_path, normalized_output_docx_path)
+        temp_path = None
+        return normalized_output_docx_path
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def read_docx_paragraphs(path: Path) -> list[str]:
