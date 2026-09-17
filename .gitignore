@@ -32,3 +32,5 @@ tests/
 .codex/
 
 dev-doc/
+
+/AGENTS.md
