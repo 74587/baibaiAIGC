@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import threading
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -104,6 +106,108 @@ class PromptMappingTests(unittest.TestCase):
             {
                 1: "prompts/baibaiaigc-en.md",
             },
+        )
+
+
+class ParallelRoundTests(unittest.TestCase):
+    def make_temp_dir(self) -> Path:
+        TEMP_ROOT.mkdir(exist_ok=True)
+        temp_dir = TEMP_ROOT / f"case_{uuid.uuid4().hex}"
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(shutil.rmtree, temp_dir, True)
+        return temp_dir
+
+    def test_runs_later_chunks_in_parallel_with_neighbor_context(self) -> None:
+        temp_path = self.make_temp_dir()
+        input_path = temp_path / "input.txt"
+        output_path = temp_path / "output.txt"
+        manifest_path = temp_path / "manifest.json"
+        input_path.write_text("甲乙丙丁戊\n\n己庚辛壬癸", encoding="utf-8")
+
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        prompts: dict[str, str] = {}
+        events: list[dict[str, object]] = []
+
+        def transform(chunk_text: str, prompt_input: str, _: int, chunk_id: str) -> str:
+            nonlocal active, max_active
+            prompts[chunk_id] = prompt_input
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return chunk_text
+
+        with patch("aigc_round_service.update_round", return_value={"ok": True}):
+            result = run_round(
+                doc_id="tests/parallel.txt",
+                round_number=1,
+                input_path=input_path,
+                output_path=output_path,
+                manifest_path=manifest_path,
+                transform=transform,
+                chunk_limit=4,
+                progress_callback=events.append,
+            )
+
+        self.assertEqual(max_active, 3)
+        self.assertIn("[NEXT EXCERPT]\n戊", prompts["p0_c0"])
+        self.assertIn("[PREVIOUS EXCERPT]\n甲乙丙丁", prompts["p0_c1"])
+        self.assertIn(
+            {
+                "phase": "processing-batch",
+                "currentChunks": [2, 3, 4],
+                "paragraphIndexes": [0, 1, 1],
+                "parallelism": 3,
+            },
+            [
+                {
+                    "phase": event["phase"],
+                    "currentChunks": event.get("currentChunks"),
+                    "paragraphIndexes": event.get("paragraphIndexes"),
+                    "parallelism": event.get("parallelism"),
+                }
+                for event in events
+                if event["phase"] == "processing-batch"
+            ],
+        )
+        self.assertEqual(result["completed_chunk_count"], 4)
+
+    def test_partial_round_only_calls_the_model_for_selected_paragraphs(self) -> None:
+        temp_path = self.make_temp_dir()
+        input_path = temp_path / "input.txt"
+        output_path = temp_path / "output.txt"
+        manifest_path = temp_path / "manifest.json"
+        input_path.write_text("甲乙丙丁戊\n\n己庚辛壬癸", encoding="utf-8")
+        calls: list[str] = []
+        events: list[dict[str, object]] = []
+
+        def transform(chunk_text: str, _: str, __: int, chunk_id: str) -> str:
+            calls.append(chunk_id)
+            return f"改写{chunk_text}"
+
+        with patch("aigc_round_service.update_round", return_value={"ok": True}):
+            result = run_round(
+                doc_id="tests/partial.txt",
+                round_number=1,
+                input_path=input_path,
+                output_path=output_path,
+                manifest_path=manifest_path,
+                transform=transform,
+                chunk_limit=4,
+                target_paragraph_indexes=[0],
+                progress_callback=events.append,
+            )
+
+        self.assertEqual(calls, ["p0_c0", "p0_c1"])
+        self.assertEqual(result["completed_chunk_count"], 4)
+        self.assertEqual(output_path.read_text(encoding="utf-8"), "改写甲乙丙丁改写戊\n\n己庚辛壬癸")
+        self.assertEqual(
+            [event["currentChunk"] for event in events if event["phase"] == "chunk-preserved"],
+            [3, 4],
         )
 
 

@@ -4,6 +4,8 @@ export type LifecycleStatus = "in_progress" | "interrupted" | "completed";
 export type RoundProgressPhase =
   | "chunking-ready"
   | "chunk-skipped"
+  | "chunk-preserved"
+  | "processing-batch"
   | "processing-chunk"
   | "chunk-error"
   | "chunk-complete"
@@ -48,7 +50,11 @@ export type RoundProgress = {
   phase: RoundProgressPhase;
   round: number;
   currentChunk?: number;
+  currentChunks?: number[];
+  paragraphIndexes?: number[];
   totalChunks?: number;
+  modelChunkCount?: number;
+  parallelism?: number;
   completedChunks?: number;
   remainingChunks?: number;
   chunkId?: string;

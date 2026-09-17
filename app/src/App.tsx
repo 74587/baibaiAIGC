@@ -34,16 +34,34 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
   if (progress.phase === "chunk-error") {
     return `第 ${progress.round} 轮已暂停，第 ${progress.currentChunk}/${progress.totalChunks} 块处理失败`;
   }
+  if (progress.phase === "processing-batch" && progress.currentChunks?.length && progress.totalChunks) {
+    const parallelism = progress.parallelism ?? progress.currentChunks.length;
+    const chunkLabels = progress.currentChunks.map((chunk, index) => {
+      const paragraphIndex = progress.paragraphIndexes?.[index];
+      return paragraphIndex === undefined ? `第 ${chunk} 块` : `第 ${paragraphIndex + 1} 段（第 ${chunk} 块）`;
+    });
+    if (parallelism === 1) {
+      return `正在执行第 ${progress.round} 轮，${chunkLabels[0]}`;
+    }
+    return `第 ${progress.round} 轮并行处理中：${chunkLabels.join("、")}（${parallelism} 路）`;
+  }
   if (progress.phase === "processing-chunk" && progress.currentChunk && progress.totalChunks) {
     return `正在执行第 ${progress.round} 轮，第 ${progress.currentChunk}/${progress.totalChunks} 块`;
   }
   if (progress.phase === "chunking-ready" && progress.totalChunks) {
     const prefix = progress.resumed ? "已恢复断点" : "已完成切块";
     const completed = progress.completedChunks ? `，已完成 ${progress.completedChunks} 块` : "";
-    return `第 ${progress.round} 轮${prefix}，共 ${progress.totalChunks} 块${completed}，准备开始处理`;
+    const modelCount = progress.modelChunkCount && progress.modelChunkCount !== progress.totalChunks
+      ? `，模型仅处理 ${progress.modelChunkCount} 块`
+      : "";
+    return `第 ${progress.round} 轮${prefix}，全文共 ${progress.totalChunks} 块${modelCount}${completed}，准备开始处理`;
   }
   if (progress.phase === "chunk-skipped" && progress.currentChunk && progress.totalChunks) {
     return `第 ${progress.round} 轮跳过已完成块，第 ${progress.currentChunk}/${progress.totalChunks} 块已复用`;
+  }
+  if (progress.phase === "chunk-preserved" && progress.currentChunk && progress.totalChunks) {
+    const paragraph = progress.paragraphIndex === undefined ? "" : `第 ${progress.paragraphIndex + 1} 段`;
+    return `第 ${progress.round} 轮${paragraph}${paragraph ? "，" : ""}第 ${progress.currentChunk}/${progress.totalChunks} 块未选择，保留原文`;
   }
   if (progress.phase === "restoring-output") {
     return `第 ${progress.round} 轮分块处理完成，正在恢复完整输出`;

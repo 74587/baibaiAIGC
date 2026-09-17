@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
 from aigc_records import ROOT_DIR, update_round
-from chunking import DEFAULT_CHUNK_LIMIT, ChunkManifest, build_manifest, restore_text_from_chunks, save_manifest
+from chunking import DEFAULT_CHUNK_LIMIT, Chunk, ChunkManifest, build_manifest, restore_text_from_chunks, save_manifest
 
 
 PROMPT_PROFILES = {
@@ -24,6 +25,8 @@ PROMPT_PROFILE_CHUNK_METRICS = {
 }
 
 MAX_ROUNDS = max(max(rounds) for rounds in PROMPT_PROFILES.values())
+MAX_CONCURRENT_CHUNKS = 3
+CONTEXT_EXCERPT_LIMIT = 60
 
 
 Transform = Callable[[str, str, int, str], str]
@@ -240,16 +243,33 @@ def build_prompt_input(
     round_number: int,
     chunk_id: str,
     extra_contract: str | None = None,
+    context_before: str = "",
+    context_after: str = "",
 ) -> str:
     contract_parts = [SHARED_OUTPUT_CONTRACT]
     if extra_contract:
         contract_parts.append(extra_contract.strip())
     contract_text = "\n\n".join(part for part in contract_parts if part.strip())
+    context_parts = []
+    if context_before:
+        context_parts.append(f"[PREVIOUS EXCERPT]\n{context_before}")
+    if context_after:
+        context_parts.append(f"[NEXT EXCERPT]\n{context_after}")
+    context_text = "\n\n".join(context_parts)
+    context_section = (
+        "[NEARBY ORIGINAL CONTEXT]\n"
+        "Use these excerpts only to keep references and terminology consistent. "
+        "Do not rewrite or return them.\n"
+        f"{context_text}\n\n"
+        if context_text
+        else ""
+    )
     return (
         f"[ROUND {round_number}]\n"
         f"[CHUNK {chunk_id}]\n\n"
         f"{prompt_text.strip()}\n\n"
         f"{contract_text}\n\n"
+        f"{context_section}"
         "[INPUT TEXT]\n"
         f"{chunk_text}"
     )
@@ -261,8 +281,17 @@ def _rewrite_chunk_with_validation(
     chunk_text: str,
     round_number: int,
     chunk_id: str,
+    context_before: str = "",
+    context_after: str = "",
 ) -> str:
-    prompt_input = build_prompt_input(prompt_text, chunk_text, round_number, chunk_id)
+    prompt_input = build_prompt_input(
+        prompt_text,
+        chunk_text,
+        round_number,
+        chunk_id,
+        context_before=context_before,
+        context_after=context_after,
+    )
     chunk_output = transform(chunk_text, prompt_input, round_number, chunk_id)
     try:
         validate_chunk_output(chunk_text, chunk_output, chunk_id)
@@ -277,10 +306,18 @@ def _rewrite_chunk_with_validation(
         round_number,
         chunk_id,
         extra_contract=RETRY_OUTPUT_CONTRACT,
+        context_before=context_before,
+        context_after=context_after,
     )
     retry_output = transform(chunk_text, retry_prompt_input, round_number, chunk_id)
     validate_chunk_output(chunk_text, retry_output, chunk_id)
     return retry_output
+
+
+def _build_context_excerpts(manifest: ChunkManifest, chunk_position: int) -> tuple[str, str]:
+    previous = manifest.chunks[chunk_position - 1].text if chunk_position else ""
+    following = manifest.chunks[chunk_position + 1].text if chunk_position + 1 < manifest.chunk_count else ""
+    return previous[-CONTEXT_EXCERPT_LIMIT:], following[:CONTEXT_EXCERPT_LIMIT]
 
 
 def build_progress_path(manifest_path: Path) -> Path:
@@ -658,12 +695,20 @@ def run_round(
     progress_payload["based_on_manifest_path"] = based_on_manifest_path or str(progress_payload.get("based_on_manifest_path", "") or "")
     _save_progress_payload(normalized_progress_path, progress_payload)
 
+    target_paragraph_index_set = set(normalized_targets)
+    model_chunk_count = sum(
+        1
+        for chunk in manifest.chunks
+        if not target_paragraph_index_set or chunk.paragraph_index in target_paragraph_index_set
+    )
+
     if progress_callback is not None:
         progress_callback(
             {
                 "phase": "chunking-ready",
                 "round": round_number,
                 "totalChunks": manifest.chunk_count,
+                "modelChunkCount": model_chunk_count,
                 "completedChunks": completed_chunks,
                 "remainingChunks": manifest.chunk_count - completed_chunks,
                 "paragraphCount": manifest.paragraph_count,
@@ -680,7 +725,34 @@ def run_round(
 
     prompts = get_prompt_mapping(normalized_prompt_profile)
     prompt_text = load_prompt(normalized_prompt_profile, round_number)
-    target_paragraph_index_set = set(normalized_targets)
+
+    def save_chunk_output(index: int, chunk: Chunk, chunk_output: str, phase: str = "chunk-complete") -> None:
+        chunk_id = chunk.chunk_id
+        chunk_outputs[chunk_id] = chunk_output
+        progress_payload["chunk_outputs"] = chunk_outputs
+        progress_payload["status"] = "in_progress"
+        progress_payload["last_error"] = ""
+        progress_payload["last_error_chunk_id"] = ""
+        progress_payload["stop_requested"] = False
+        progress_payload["stop_reason"] = ""
+        progress_payload["completed_chunks"] = len(chunk_outputs)
+        _save_progress_payload(normalized_progress_path, progress_payload)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": phase,
+                    "round": round_number,
+                    "currentChunk": index,
+                    "totalChunks": manifest.chunk_count,
+                    "completedChunks": len(chunk_outputs),
+                    "chunkId": chunk_id,
+                    "paragraphIndex": chunk.paragraph_index,
+                    "progressPath": str(normalized_progress_path),
+                }
+            )
+
+    pending_chunks: list[tuple[int, Chunk]] = []
     for index, chunk in enumerate(manifest.chunks, start=1):
         _stop_if_requested(
             stop_request_path=normalized_stop_request_path,
@@ -701,35 +773,69 @@ def run_round(
                         "totalChunks": manifest.chunk_count,
                         "completedChunks": len(chunk_outputs),
                         "chunkId": chunk.chunk_id,
+                        "paragraphIndex": chunk.paragraph_index,
                     }
                 )
             continue
 
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "phase": "processing-chunk",
-                    "round": round_number,
-                    "currentChunk": index,
-                    "totalChunks": manifest.chunk_count,
-                    "completedChunks": len(chunk_outputs),
-                    "chunkId": chunk.chunk_id,
-                    "paragraphIndex": chunk.paragraph_index,
-                    "chunkIndex": chunk.chunk_index,
-                }
-            )
-        try:
-            if target_paragraph_index_set and chunk.paragraph_index not in target_paragraph_index_set:
-                chunk_output = chunk.text
-            else:
-                chunk_output = _rewrite_chunk_with_validation(
+        if target_paragraph_index_set and chunk.paragraph_index not in target_paragraph_index_set:
+            save_chunk_output(index, chunk, chunk.text, phase="chunk-preserved")
+            continue
+        pending_chunks.append((index, chunk))
+
+    batch_start = 0
+    while batch_start < len(pending_chunks):
+        _stop_if_requested(
+            stop_request_path=normalized_stop_request_path,
+            progress_path=normalized_progress_path,
+            progress_payload=progress_payload,
+            round_number=round_number,
+            completed_chunks=len(chunk_outputs),
+            total_chunks=manifest.chunk_count,
+            progress_callback=progress_callback,
+        )
+        batch_size = 1 if batch_start == 0 else MAX_CONCURRENT_CHUNKS
+        batch = pending_chunks[batch_start:batch_start + batch_size]
+        with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+            futures = {}
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "processing-batch",
+                        "round": round_number,
+                        "currentChunk": batch[-1][0],
+                        "currentChunks": [index for index, _ in batch],
+                        "paragraphIndexes": [chunk.paragraph_index for _, chunk in batch],
+                        "totalChunks": manifest.chunk_count,
+                        "modelChunkCount": model_chunk_count,
+                        "completedChunks": len(chunk_outputs),
+                        "parallelism": len(batch),
+                    }
+                )
+            for index, chunk in batch:
+                context_before, context_after = _build_context_excerpts(manifest, index - 1)
+                future = executor.submit(
+                    _rewrite_chunk_with_validation,
                     transform,
                     prompt_text,
                     chunk.text,
                     round_number,
                     chunk.chunk_id,
+                    context_before,
+                    context_after,
                 )
-        except Exception as exc:
+                futures[future] = (index, chunk)
+
+            failures: list[tuple[int, Chunk, Exception]] = []
+            for future in as_completed(futures):
+                index, chunk = futures[future]
+                try:
+                    save_chunk_output(index, chunk, future.result())
+                except Exception as exc:
+                    failures.append((index, chunk, exc))
+
+        if failures:
+            index, chunk, exc = min(failures, key=lambda item: item[0])
             error_message = str(exc)
             progress_payload["status"] = "paused"
             progress_payload["last_error"] = error_message
@@ -755,28 +861,7 @@ def run_round(
                 completed_chunks=len(chunk_outputs),
                 total_chunks=manifest.chunk_count,
             ) from exc
-        chunk_outputs[chunk.chunk_id] = chunk_output
-        progress_payload["chunk_outputs"] = chunk_outputs
-        progress_payload["status"] = "in_progress"
-        progress_payload["last_error"] = ""
-        progress_payload["last_error_chunk_id"] = ""
-        progress_payload["stop_requested"] = False
-        progress_payload["stop_reason"] = ""
-        progress_payload["completed_chunks"] = len(chunk_outputs)
-        _save_progress_payload(normalized_progress_path, progress_payload)
-
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "phase": "chunk-complete",
-                    "round": round_number,
-                    "currentChunk": index,
-                    "totalChunks": manifest.chunk_count,
-                    "completedChunks": len(chunk_outputs),
-                    "chunkId": chunk.chunk_id,
-                    "progressPath": str(normalized_progress_path),
-                }
-            )
+        batch_start += len(batch)
 
     _stop_if_requested(
         stop_request_path=normalized_stop_request_path,
