@@ -14,7 +14,6 @@ def _build_api_transform(
     api_key: str,
     model: str,
     base_url: str,
-    api_type: str | None,
     temperature: float,
 ) -> Callable[[str, str, int, str], str]:
     def transform(_: str, prompt_input: str, __: int, ___: str) -> str:
@@ -23,7 +22,6 @@ def _build_api_transform(
             model=model,
             api_key=api_key,
             base_url=base_url,
-            api_type=api_type,
             temperature=temperature,
         )
 
@@ -44,9 +42,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--base-url",
         default=None,
-        help="OpenAI-compatible base URL or chat/completions endpoint. Defaults to BAIBAIAIGC_BASE_URL or OPENAI_BASE_URL.",
+        help="Provider base URL. Defaults to BAIBAIAIGC_BASE_URL or OPENAI_BASE_URL.",
     )
-    parser.add_argument("--api-type", default=None, help="API type: chat_completions or responses.")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature for API mode.")
     parser.add_argument("--prompt-profile", default="cn", help="Prompt profile: cn or en.")
     parser.add_argument(
@@ -66,11 +63,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     debug_payload: dict[str, str] = {}
-    resolved_api_key, resolved_model, resolved_base_url, resolved_api_type = read_api_config(
+    resolved_api_key, resolved_model, resolved_base_url = read_api_config(
         args.api_key,
         args.model,
         args.base_url,
-        args.api_type,
     )
 
     if resolved_api_key and resolved_model and resolved_base_url:
@@ -78,10 +74,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             api_key=resolved_api_key,
             model=resolved_model,
             base_url=resolved_base_url,
-            api_type=resolved_api_type,
             temperature=args.temperature,
         )
-    elif args.api_key or args.model or args.base_url or args.api_type:
+    elif args.api_key or args.model or args.base_url:
         parser.error("API mode requires api_key, model, and base_url together, either by args or environment variables.")
     elif args.dry_run:
         def base_transform(chunk_text: str, _: str, __: int, ___: str) -> str:

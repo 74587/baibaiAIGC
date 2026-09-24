@@ -8,6 +8,7 @@ import type {
   DocumentHistory,
   DocumentStatus,
   ExportResult,
+  FetchModelsResult,
   HistoryListResponse,
   ModelConfig,
   OutputPreview,
@@ -30,6 +31,10 @@ export const desktopService: AppService = {
 
   async testModelConnection(config: ModelConfig): Promise<TestConnectionResult> {
     return invoke<TestConnectionResult>("test_model_connection", { config });
+  },
+
+  async fetchModels(config: ModelConfig): Promise<FetchModelsResult> {
+    return invoke<FetchModelsResult>("fetch_models", { config });
   },
 
   async pickInputFile(): Promise<PickedDocument | null> {

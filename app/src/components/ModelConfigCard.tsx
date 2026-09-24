@@ -4,12 +4,14 @@ import type { ModelConfig } from "../types/app";
 type Props = {
   value: ModelConfig;
   busy: boolean;
+  availableModels: string[];
   onChange: (value: ModelConfig) => void;
+  onFetchModels: () => void;
   onSave: () => void;
   onTestConnection: () => void;
 };
 
-export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnection }: Props) {
+export function ModelConfigCard({ value, busy, availableModels, onChange, onFetchModels, onSave, onTestConnection }: Props) {
   function handleTextField<K extends keyof ModelConfig>(key: K) {
     return (event: ChangeEvent<HTMLInputElement>) => {
       const nextValue = key === "temperature" ? Number(event.target.value) : event.target.value;
@@ -48,25 +50,31 @@ export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnectio
       </label>
       <label className="field">
         <span>模型名称</span>
-        <input
-          value={value.model}
-          onChange={handleTextField("model")}
-          placeholder="例如 gpt-4.1-mini"
-        />
+        <div className="model-input-row">
+          <input
+            value={value.model}
+            onChange={handleTextField("model")}
+            placeholder="provider/模型名，例如 openai/gpt-4.1-mini"
+          />
+          <button className="secondary-button" onClick={onFetchModels} disabled={busy}>
+            获取模型列表
+          </button>
+        </div>
       </label>
-      <label className="field">
-        <span>接口类型</span>
-        <select
-          value={value.apiType}
-          onChange={(event) => onChange({
-            ...value,
-            apiType: event.target.value as ModelConfig["apiType"],
-          })}
-        >
-          <option value="chat_completions">chat/completions</option>
-          <option value="responses">responses</option>
-        </select>
-      </label>
+      {availableModels.length > 0 ? (
+        <label className="field">
+          <span>从列表选择模型</span>
+          <select
+            value={value.model}
+            onChange={(event) => onChange({ ...value, model: event.target.value })}
+          >
+            <option value="">请选择模型</option>
+            {availableModels.map((model) => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <label className="field">
         <span>Temperature</span>
         <input

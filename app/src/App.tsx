@@ -147,6 +147,7 @@ export function App({ service, pickerLabel }: Props) {
   const progressUnlistenRef = useRef<null | (() => void)>(null);
   const [stopBusy, setStopBusy] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageKey>("workspace");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const {
     modelConfig,
     documentStatus,
@@ -315,13 +316,30 @@ export function App({ service, pickerLabel }: Props) {
       const result = await service.testModelConnection(modelConfig);
       setNotice(
         result.message
-        + (result.apiType ? ` 类型：${result.apiType}` : "")
         + (result.endpoint ? ` 接口：${result.endpoint}` : ""),
       );
       setRuntimeStep(result.offlineMode ? "离线模式已确认" : "接口连通性测试成功");
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("接口连通性测试失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleFetchModels() {
+    try {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      setRuntimeStep("正在获取模型列表");
+      const result = await service.fetchModels(modelConfig);
+      setAvailableModels(result.models);
+      setNotice(result.models.length > 0 ? `已获取 ${result.models.length} 个模型，请在下方列表选择。` : "接口未返回任何模型。");
+      setRuntimeStep("模型列表已获取");
+    } catch (appError) {
+      setError(String(appError));
+      setRuntimeStep("获取模型列表失败");
     } finally {
       setBusy(false);
     }
@@ -706,7 +724,9 @@ export function App({ service, pickerLabel }: Props) {
             <ModelConfigCard
               value={modelConfig}
               busy={busy}
+              availableModels={availableModels}
               onChange={setModelConfig}
+              onFetchModels={handleFetchModels}
               onSave={handleSaveModelConfig}
               onTestConnection={handleTestConnection}
             />

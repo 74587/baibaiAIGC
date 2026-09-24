@@ -17,7 +17,6 @@ struct TestConnectionResult {
     message: String,
     endpoint: String,
     model: String,
-    api_type: Option<String>,
     status: Option<i32>,
 }
 
@@ -33,7 +32,6 @@ struct ModelConfig {
     base_url: String,
     api_key: String,
     model: String,
-    api_type: String,
     temperature: f64,
     offline_mode: bool,
     prompt_profile: String,
@@ -232,6 +230,20 @@ async fn test_model_connection(config: ModelConfig) -> Result<TestConnectionResu
 }
 
 #[tauri::command]
+async fn fetch_models(config: ModelConfig) -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let config_json = serde_json::to_string(&config).map_err(|error| error.to_string())?;
+        let output = run_python_json(&[
+            "fetch-models".to_string(),
+            config_json,
+        ])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn get_document_status(source_path: String, prompt_profile: String) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let output = run_python_json(&["document-status".to_string(), source_path, prompt_profile])?;
@@ -379,6 +391,7 @@ fn main() {
             load_model_config,
             save_model_config,
             test_model_connection,
+            fetch_models,
             get_document_status,
             get_document_history,
             list_document_histories,

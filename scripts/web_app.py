@@ -14,6 +14,7 @@ from app_config import load_app_config, save_app_config
 from app_service import (
     delete_document_history,
     export_round_output,
+    fetch_model_list_for_app,
     get_document_history,
     get_document_status,
     list_document_histories,
@@ -203,6 +204,15 @@ def post_test_connection() -> tuple[Response, int] | Response:
     try:
         payload = request.get_json(silent=True) or {}
         return jsonify(test_model_connection(payload))
+    except Exception as exc:
+        return error_response(str(exc))
+
+
+@app.route("/api/fetch-models", methods=["POST"])
+def post_fetch_models() -> tuple[Response, int] | Response:
+    try:
+        payload = request.get_json(silent=True) or {}
+        return jsonify(fetch_model_list_for_app(payload))
     except Exception as exc:
         return error_response(str(exc))
 

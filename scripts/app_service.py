@@ -19,7 +19,7 @@ from aigc_round_service import MAX_ROUNDS, RoundPausedError, RoundStoppedError, 
 from app_config import normalize_model_config
 from chunking import build_manifest, load_manifest, split_text_to_paragraphs
 from docx_pipeline import _split_text_into_blocks, render_docx_from_template, write_docx_text
-from llm_client import llm_completion, test_llm_connection
+from llm_client import fetch_model_list, llm_completion, test_llm_connection
 from managed_sources import get_display_name_for_source
 from skill_round_helper import build_execution_context, build_round_context, ensure_skill_input_text, get_document_round_state
 
@@ -648,7 +648,6 @@ def run_round_for_app(
     base_url = str(normalized_config["baseUrl"])
     api_key = str(normalized_config["apiKey"])
     model = str(normalized_config["model"])
-    api_type = str(normalized_config["apiType"])
     temperature = float(normalized_config["temperature"])
     offline_mode = bool(normalized_config["offlineMode"])
     prompt_profile = str(normalized_config["promptProfile"])
@@ -667,7 +666,6 @@ def run_round_for_app(
                     model=model,
                     api_key=api_key,
                     base_url=base_url,
-                    api_type=api_type,
                     temperature=temperature,
                 )
             except Exception as exc:
@@ -847,7 +845,6 @@ def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
     base_url = str(normalized_config["baseUrl"])
     api_key = str(normalized_config["apiKey"])
     model = str(normalized_config["model"])
-    api_type = str(normalized_config["apiType"])
     offline_mode = bool(normalized_config["offlineMode"])
 
     if offline_mode:
@@ -857,18 +854,33 @@ def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
             "message": "当前为离线模式，无需测试远程连通性。",
             "endpoint": "",
             "model": model,
-            "apiType": api_type,
         }
 
     if not base_url or not api_key or not model:
         raise ValueError("Model configuration is incomplete.")
 
-    result = test_llm_connection(model=model, api_key=api_key, base_url=base_url, api_type=api_type)
+    result = test_llm_connection(model=model, api_key=api_key, base_url=base_url)
     return {
         "ok": True,
         "offlineMode": False,
         "message": "接口连通性测试成功。",
         **result,
+    }
+
+
+def fetch_model_list_for_app(model_config: dict[str, Any]) -> dict[str, Any]:
+    normalized_config = normalize_model_config(model_config)
+    base_url = str(normalized_config["baseUrl"])
+    api_key = str(normalized_config["apiKey"])
+    model = str(normalized_config["model"])
+
+    if not api_key:
+        raise ValueError("API key is required to fetch models.")
+
+    models = fetch_model_list(api_key=api_key, base_url=base_url, model=model)
+    return {
+        "ok": True,
+        "models": models,
     }
 
 
@@ -1010,6 +1022,10 @@ def cli_main() -> None:
     test_parser.add_argument("model_config_json", nargs="?", default=None)
     test_parser.add_argument("--config-file", default=None)
 
+    fetch_models_parser = subparsers.add_parser("fetch-models")
+    fetch_models_parser.add_argument("model_config_json", nargs="?", default=None)
+    fetch_models_parser.add_argument("--config-file", default=None)
+
     export_parser = subparsers.add_parser("export-round")
     export_parser.add_argument("output_path")
     export_parser.add_argument("export_path")
@@ -1061,6 +1077,9 @@ def cli_main() -> None:
             emit_result_payload(payload)
         elif args.command == "test-connection":
             payload = test_model_connection(load_model_config_payload(args.model_config_json, args.config_file))
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "fetch-models":
+            payload = fetch_model_list_for_app(load_model_config_payload(args.model_config_json, args.config_file))
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "export-round":
             payload = export_round_output(

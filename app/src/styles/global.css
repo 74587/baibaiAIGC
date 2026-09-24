@@ -346,6 +346,21 @@ select {
   font-size: 12px;
 }
 
+.model-input-row {
+  display: flex;
+  gap: 10px;
+}
+
+.model-input-row input {
+  flex: 1;
+}
+
+.model-input-row .secondary-button {
+  flex: none;
+  min-height: auto;
+  font-size: 13px;
+}
+
 .toggle-field {
   display: flex;
   align-items: center;

@@ -3,6 +3,7 @@ import type {
   DocumentHistory,
   DocumentStatus,
   ExportResult,
+  FetchModelsResult,
   HistoryListResponse,
   ModelConfig,
   OutputPreview,
@@ -22,6 +23,7 @@ export interface AppService {
   loadModelConfig(): Promise<ModelConfig>;
   saveModelConfig(config: ModelConfig): Promise<ModelConfig>;
   testModelConnection(config: ModelConfig): Promise<TestConnectionResult>;
+  fetchModels(config: ModelConfig): Promise<FetchModelsResult>;
   pickInputFile(): Promise<PickedDocument | null>;
   getDocumentStatus(sourcePath: string, modelConfig: ModelConfig): Promise<DocumentStatus>;
   getDocumentHistory(sourcePath: string): Promise<DocumentHistory>;

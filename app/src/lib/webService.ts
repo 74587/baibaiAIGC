@@ -5,6 +5,7 @@ import type {
   DocumentHistory,
   DocumentStatus,
   ExportResult,
+  FetchModelsResult,
   HistoryListResponse,
   ModelConfig,
   OutputPreview,
@@ -193,6 +194,13 @@ export const webService: AppService = {
 
   async testModelConnection(config: ModelConfig): Promise<TestConnectionResult> {
     return requestJson<TestConnectionResult>("/api/test-connection", {
+      method: "POST",
+      body: JSON.stringify(normalizeModelConfig(config)),
+    });
+  },
+
+  async fetchModels(config: ModelConfig): Promise<FetchModelsResult> {
+    return requestJson<FetchModelsResult>("/api/fetch-models", {
       method: "POST",
       body: JSON.stringify(normalizeModelConfig(config)),
     });

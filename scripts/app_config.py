@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from aigc_round_service import normalize_prompt_profile
-from llm_client import normalize_api_type
 
 APP_DIR_NAME = "BaibaiAIGC"
 CONFIG_FILE_NAME = "config.json"
@@ -14,7 +13,6 @@ DEFAULT_MODEL_CONFIG = {
     "baseUrl": "",
     "apiKey": "",
     "model": "",
-    "apiType": "chat_completions",
     "temperature": 0.7,
     "offlineMode": False,
     "promptProfile": "cn",
@@ -46,7 +44,6 @@ def normalize_model_config(config: dict[str, Any] | None = None) -> dict[str, An
         "baseUrl": base_url,
         "apiKey": api_key,
         "model": model,
-        "apiType": normalize_api_type(str(payload.get("apiType", "") or ""), base_url),
         "temperature": temperature,
         "offlineMode": bool(payload.get("offlineMode", DEFAULT_MODEL_CONFIG["offlineMode"])),
         "promptProfile": normalize_prompt_profile(payload.get("promptProfile", DEFAULT_MODEL_CONFIG["promptProfile"])),

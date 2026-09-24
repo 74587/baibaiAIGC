@@ -1,4 +1,3 @@
-export type ApiType = "chat_completions" | "responses";
 export type PromptProfile = "cn" | "en";
 export type LifecycleStatus = "in_progress" | "interrupted" | "completed";
 export type RoundProgressPhase =
@@ -16,7 +15,6 @@ export type ModelConfig = {
   baseUrl: string;
   apiKey: string;
   model: string;
-  apiType: ApiType;
   temperature: number;
   offlineMode: boolean;
   promptProfile: PromptProfile;
@@ -26,7 +24,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   baseUrl: "",
   apiKey: "",
   model: "",
-  apiType: "chat_completions",
   temperature: 0.7,
   offlineMode: false,
   promptProfile: "cn",
@@ -37,7 +34,6 @@ export function normalizeModelConfig(config?: Partial<ModelConfig> | null): Mode
     baseUrl: String(config?.baseUrl ?? DEFAULT_MODEL_CONFIG.baseUrl),
     apiKey: String(config?.apiKey ?? DEFAULT_MODEL_CONFIG.apiKey),
     model: String(config?.model ?? DEFAULT_MODEL_CONFIG.model),
-    apiType: config?.apiType === "responses" ? "responses" : "chat_completions",
     temperature: typeof config?.temperature === "number" && Number.isFinite(config.temperature)
       ? config.temperature
       : DEFAULT_MODEL_CONFIG.temperature,
@@ -98,8 +94,12 @@ export type TestConnectionResult = {
   message: string;
   endpoint: string;
   model: string;
-  apiType?: ApiType;
   status?: number;
+};
+
+export type FetchModelsResult = {
+  ok: boolean;
+  models: string[];
 };
 
 export type DocumentStatus = {
